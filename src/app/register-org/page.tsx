@@ -18,8 +18,14 @@ export default function RegisterOrgPage() {
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function register() {
-    // Default the Gmail sender to the org email when left blank.
-    const payload = { ...form, gmailUser: form.gmailUser || form.email };
+    // Gmail is optional: only send a sender address when an App Password is given
+    // (otherwise the platform's own account sends the email).
+    const payload = {
+      orgName: form.orgName,
+      email: form.email,
+      gmailPass: form.gmailPass,
+      gmailUser: form.gmailPass ? form.gmailUser || form.email : "",
+    };
     await api("/api/auth/register", { method: "POST", auth: false, body: payload });
   }
 
@@ -29,13 +35,14 @@ export default function RegisterOrgPage() {
     try {
       await register();
       setSent(true);
-      toast.push("Credentials verified. Check your inbox for a code.", "ok");
+      toast.push("Code sent — check your inbox.", "ok");
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Registration failed.", "err");
     } finally {
       setBusy(false);
     }
   }
+
 
   return (
     <div className="auth-wrap">
@@ -46,8 +53,9 @@ export default function RegisterOrgPage() {
         <div className="card card--pad-lg">
           <h1 style={{ textAlign: "center" }}>Create your organization</h1>
           <p className="muted center mt-8" style={{ marginBottom: 20 }}>
-            Your org sends all email (codes + QR tickets) through its own Gmail.
+            Codes and QR tickets are emailed from Convoca. Optionally send from your own Gmail.
           </p>
+
 
           {!sent ? (
             <form onSubmit={submit}>
@@ -59,18 +67,26 @@ export default function RegisterOrgPage() {
                 <label htmlFor="email">Owner email</label>
                 <input id="email" className="input" type="email" value={form.email} onChange={set("email")} placeholder="you@company.com" required />
               </div>
-              <div className="field">
-                <label htmlFor="gmailUser">Gmail sender address</label>
-                <input id="gmailUser" className="input" type="email" value={form.gmailUser} onChange={set("gmailUser")} placeholder="Defaults to owner email" />
-                <span className="hint">The Gmail account that will send your emails.</span>
-              </div>
-              <div className="field">
-                <label htmlFor="gmailPass">Gmail App Password</label>
-                <input id="gmailPass" className="input" type="password" value={form.gmailPass} onChange={set("gmailPass")} placeholder="16-character app password" required />
-                <span className="hint">
-                  Create one at Google Account → Security → App passwords. Not your login password.
-                </span>
-              </div>
+              <details style={{ marginBottom: 14 }}>
+                <summary className="small" style={{ cursor: "pointer", color: "var(--slate-700)", fontWeight: 650 }}>
+                  Use your own Gmail to send (optional)
+                </summary>
+                <div style={{ marginTop: 12 }}>
+                  <div className="field">
+                    <label htmlFor="gmailUser">Gmail sender address</label>
+                    <input id="gmailUser" className="input" type="email" value={form.gmailUser} onChange={set("gmailUser")} placeholder="Defaults to owner email" />
+                    <span className="hint">The Gmail account that will send your emails.</span>
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label htmlFor="gmailPass">Gmail App Password</label>
+                    <input id="gmailPass" className="input" type="password" value={form.gmailPass} onChange={set("gmailPass")} placeholder="16-character app password" />
+                    <span className="hint">
+                      Create one at Google Account → Security → App passwords. Not your login password.
+                    </span>
+                  </div>
+                </div>
+              </details>
+
               <button className="btn btn--primary btn--block" disabled={busy}>
                 {busy ? <span className="spinner" /> : "Verify & send code"}
               </button>
