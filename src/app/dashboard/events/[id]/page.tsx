@@ -10,7 +10,7 @@ import StatsPanel from "@/components/StatsPanel";
 import ParticipantsPanel from "@/components/ParticipantsPanel";
 import LinksPanel from "@/components/LinksPanel";
 import EventFields, { type EventFormState } from "@/components/EventFields";
-import { MODE_LABELS, type EventDoc, type EventStats, type Participant } from "@/lib/types";
+import { MODE_LABELS, type EventDoc, type EventField, type EventStats, type Participant } from "@/lib/types";
 
 type Tab = "overview" | "participants" | "registration" | "settings";
 
@@ -21,6 +21,7 @@ const toForm = (ev: EventDoc): EventFormState => ({
   mode: ev.mode,
   date: ev.date ? ev.date.slice(0, 16) : "",
   quota: ev.quota != null ? String(ev.quota) : "",
+  fields: ev.fields ?? [],
 });
 
 export default function EventDetailPage() {
@@ -66,6 +67,7 @@ export default function EventDetailPage() {
   const setField = (k: keyof EventFormState) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setSettings((f) => (f ? { ...f, [k]: e.target.value } : f));
+  const setFieldsList = (fields: EventField[]) => setSettings((f) => (f ? { ...f, fields } : f));
 
   async function saveSettings(e: React.FormEvent) {
     e.preventDefault();
@@ -133,14 +135,19 @@ export default function EventDetailPage() {
 
       {tab === "overview" && (stats ? <StatsPanel stats={stats} /> : null)}
       {tab === "participants" && (
-        <ParticipantsPanel eventId={id} participants={participants} onChange={loadParticipants} />
+        <ParticipantsPanel
+          eventId={id}
+          fields={event.fields ?? []}
+          participants={participants}
+          onChange={loadParticipants}
+        />
       )}
       {tab === "registration" && <LinksPanel eventId={id} />}
       {tab === "settings" && settings && (
         <div className="stack gap-16" style={{ maxWidth: 560 }}>
           <form className="card" onSubmit={saveSettings}>
             <h3 style={{ marginBottom: 14 }}>Event details</h3>
-            <EventFields form={settings} set={setField} />
+            <EventFields form={settings} set={setField} setFields={setFieldsList} />
             <div className="row gap-8 mt-8" style={{ justifyContent: "flex-end" }}>
               <button className="btn btn--primary" disabled={saving}>
                 {saving ? <span className="spinner" /> : "Save changes"}

@@ -5,6 +5,14 @@ export type EventMode = "in_person" | "virtual" | "hybrid";
 export type ParticipantSource = "manual" | "csv" | "self";
 export type CheckinOutcome = "success" | "duplicate" | "not_found" | "wrong_event";
 
+/** A team-defined participant field (beyond the built-in name + email). */
+export interface EventField {
+  key: string;
+  label: string;
+  required: boolean;
+}
+
+
 export interface Me {
   role: Role;
   email: string;
@@ -27,6 +35,8 @@ export interface EventDoc {
   mode: EventMode;
   date: string;
   quota: number | null;
+  /** Team-defined participant fields (beyond name + email). */
+  fields?: EventField[];
   clonedFrom: string | null;
   createdAt: string;
 }
@@ -35,8 +45,11 @@ export interface Participant {
   hash: string;
   name: string;
   email: string;
-  country: string;
-  phone: string;
+  /** Team-defined field values, keyed by EventField.key. */
+  fields?: Record<string, string>;
+  /** Legacy built-ins on pre-existing participants (optional). */
+  country?: string;
+  phone?: string;
   createdBy: string;
   qrSentAt: string | null;
   registered: boolean;
@@ -44,6 +57,7 @@ export interface Participant {
   source: ParticipantSource;
   createdAt: string;
 }
+
 
 export interface Collaborator {
   email: string;

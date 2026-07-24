@@ -51,3 +51,12 @@ linted).
 - **`EventFields` extraction paid off:** one presentational component now backs both the create modal and the settings editor, so the two can't drift. Should have built it this way from day one.
 - **Pending vs. sent** is expressed purely from `qrSentAt` (no new field): a "QR" column badge + a Send/Resend button. Deriving UI state from existing data beat adding a status enum.
 - **Edit clarity:** the edit modal warns that changing a field voids the QR (because the hash changes) — surfacing the backend's identity model to the user instead of hiding it.
+
+---
+
+## 2026-07-24 — Dynamic participant fields everywhere
+
+- **`EventFields` grew a builder** ("+ Add field" + example chips: Country, Phone, Company…), and because it's the single source for the event form, create + settings both got it for free.
+- **Everything reflects the schema:** add/edit modals render inputs per field, the table renders a column per field, CSV/Excel import maps headers → field keys (alias-tolerant), the template/export match, and the self-reg wizard appends one step per field.
+- **`pv(participant, key)`** reads `fields[key]` with a legacy `country`/`phone` fallback, so old participants still display without a migration.
+- **Lesson:** keeping stable field `key`s (not re-derived from the label on every edit) is what makes stored values survive label edits.

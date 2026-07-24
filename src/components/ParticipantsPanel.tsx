@@ -2,37 +2,51 @@
 
 import { useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { downloadCsv, parseSpreadsheetFile, participantsToCsv, type Row } from "@/lib/csv";
-
+import {
+  downloadCsv,
+  parseSpreadsheetFile,
+  participantsToCsv,
+  resolveImportRows,
+  type SheetRow,
+  templateCsv,
+} from "@/lib/csv";
 import { useToast } from "@/components/Toast";
 import Modal from "@/components/Modal";
 import QrModal from "@/components/QrModal";
-import type { Participant } from "@/lib/types";
+import type { EventField, Participant } from "@/lib/types";
 
 interface Props {
   eventId: string;
+  fields: EventField[];
   participants: Participant[];
   onChange: () => void;
 }
 
-const BLANK = { name: "", email: "", country: "", phone: "" };
-type Fields = typeof BLANK;
 type BulkResult = { ok: number; failed: number; errors: string[] };
+interface PForm {
+  name: string;
+  email: string;
+  fields: Record<string, string>;
+}
+const blankForm = (): PForm => ({ name: "", email: "", fields: {} });
 
-const TEMPLATE_CSV = "name,email,country,phone\nJane Doe,jane@example.com,United States,+1 555 0100";
+/** Reads a participant's value for a field key (custom map, or legacy column). */
+function pv(p: Participant, key: string): string {
+  return p.fields?.[key] ?? (key === "country" ? p.country : key === "phone" ? p.phone : undefined) ?? "";
+}
 
-export default function ParticipantsPanel({ eventId, participants, onChange }: Props) {
+export default function ParticipantsPanel({ eventId, fields, participants, onChange }: Props) {
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState<Fields>(BLANK);
+  const [form, setForm] = useState<PForm>(blankForm());
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Participant | null>(null);
-  const [editForm, setEditForm] = useState<Fields>(BLANK);
+  const [editForm, setEditForm] = useState<PForm>(blankForm());
   const [savingEdit, setSavingEdit] = useState(false);
   const [qrFor, setQrFor] = useState<Participant | null>(null);
   const [showImport, setShowImport] = useState(false);
-  const [importRows, setImportRows] = useState<Row[] | null>(null);
+  const [importRows, setImportRows] = useState<SheetRow[] | null>(null);
   const [importing, setImporting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -43,17 +57,21 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     const q = query.trim().toLowerCase();
     if (!q) return participants;
     return participants.filter((p) =>
-      [p.name, p.email, p.country, p.phone].some((v) => v.toLowerCase().includes(q))
+      [p.name, p.email, ...fields.map((f) => pv(p, f.key))].some((v) => v.toLowerCase().includes(q))
     );
-  }, [participants, query]);
+  }, [participants, query, fields]);
 
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.hash));
   const selectedList = useMemo(() => filtered.filter((p) => selected.has(p.hash)), [filtered, selected]);
 
-  const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
-  const setEdit = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setEditForm((f) => ({ ...f, [k]: e.target.value }));
+  const setName = (v: string) => setForm((f) => ({ ...f, name: v }));
+  const setEmail = (v: string) => setForm((f) => ({ ...f, email: v }));
+  const setFieldVal = (key: string, v: string) =>
+    setForm((f) => ({ ...f, fields: { ...f.fields, [key]: v } }));
+  const setEName = (v: string) => setEditForm((f) => ({ ...f, name: v }));
+  const setEEmail = (v: string) => setEditForm((f) => ({ ...f, email: v }));
+  const setEFieldVal = (key: string, v: string) =>
+    setEditForm((f) => ({ ...f, fields: { ...f.fields, [key]: v } }));
 
   function toggleOne(hash: string) {
     setSelected((s) => {
@@ -78,10 +96,10 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     try {
       const res = await api<{ created: boolean; emailed: boolean }>(`/api/events/${eventId}/participants`, {
         method: "POST",
-        body: form,
+        body: { name: form.name, email: form.email, fields: form.fields },
       });
       toast.push(res.created ? (res.emailed ? "Added — QR emailed." : "Added (email failed).") : "Already registered.", res.created ? "ok" : "info");
-      setForm(BLANK);
+      setForm(blankForm());
       setShowAdd(false);
       onChange();
     } catch (err) {
@@ -92,7 +110,9 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
   }
 
   function openEdit(p: Participant) {
-    setEditForm({ name: p.name, email: p.email, country: p.country, phone: p.phone });
+    const f: Record<string, string> = {};
+    for (const fld of fields) f[fld.key] = pv(p, fld.key);
+    setEditForm({ name: p.name, email: p.email, fields: f });
     setEditing(p);
   }
 
@@ -101,8 +121,11 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     if (!editing) return;
     setSavingEdit(true);
     try {
-      await api(`/api/events/${eventId}/participants/${editing.hash}`, { method: "PATCH", body: editForm });
-      toast.push("Participant updated. Their QR changed — send it again.", "ok");
+      await api(`/api/events/${eventId}/participants/${editing.hash}`, {
+        method: "PATCH",
+        body: { name: editForm.name, email: editForm.email, fields: editForm.fields },
+      });
+      toast.push("Participant updated.", "ok");
       setEditing(null);
       onChange();
     } catch (err) {
@@ -112,7 +135,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     }
   }
 
-  // ── CSV import (instructions → drag & drop → preview → import) ──────────────
+  // ── Import (instructions → drag & drop → preview) ───────────────────────────
   function openImport() {
     setImportRows(null);
     setShowImport(true);
@@ -124,9 +147,10 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
   }
   async function readFile(file: File) {
     try {
-      const rows = await parseSpreadsheetFile(file);
+      const sheet = await parseSpreadsheetFile(file);
+      const rows = resolveImportRows(sheet, fields);
       if (rows.length === 0) {
-        toast.push("No rows found. Include columns: name, email, country, phone.", "err");
+        toast.push("No rows found. Include at least name and email columns.", "err");
         return;
       }
       setImportRows(rows);
@@ -134,7 +158,6 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
       toast.push("Couldn't read that file. Use a .csv or .xlsx export.", "err");
     }
   }
-
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) readFile(file);
@@ -150,7 +173,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     if (!importRows) return;
     setImporting(true);
     try {
-      const res = await api<{ created: number; skipped: number; emailed: number; errors: string[] }>(
+      const res = await api<{ created: number; skipped: number; errors: string[] }>(
         `/api/events/${eventId}/participants/csv`,
         { method: "POST", body: { rows: importRows } },
       );
@@ -207,6 +230,23 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     }
   }
 
+  const fieldInputs = (values: Record<string, string>, onSet: (key: string, v: string) => void) =>
+    fields.length > 0 && (
+      <div className="row gap-12 wrap">
+        {fields.map((f) => (
+          <div className="field grow" style={{ minWidth: 160 }} key={f.key}>
+            <label>{f.label}{f.required ? " *" : ""}</label>
+            <input
+              className="input"
+              value={values[f.key] ?? ""}
+              onChange={(e) => onSet(f.key, e.target.value)}
+              required={f.required}
+            />
+          </div>
+        ))}
+      </div>
+    );
+
   return (
     <div>
       <div className="row wrap gap-8" style={{ justifyContent: "space-between", marginBottom: 16 }}>
@@ -219,10 +259,9 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
         />
         <div className="row gap-8 wrap">
           <button className="btn btn--ghost btn--sm" onClick={openImport}>Import</button>
-
           <button
             className="btn btn--ghost btn--sm"
-            onClick={() => downloadCsv("participants.csv", participantsToCsv(participants))}
+            onClick={() => downloadCsv("participants.csv", participantsToCsv(participants, fields))}
             disabled={participants.length === 0}
           >
             Export CSV
@@ -247,7 +286,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
 
       {filtered.length === 0 ? (
         <div className="card center" style={{ padding: 40 }}>
-          <p className="muted">{participants.length === 0 ? "No participants yet. Add one or import a CSV." : "No matches."}</p>
+          <p className="muted">{participants.length === 0 ? "No participants yet. Add one or import a file." : "No matches."}</p>
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflowX: "auto" }}>
@@ -264,7 +303,12 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
                     onChange={toggleAll}
                   />
                 </th>
-                <th>Name</th><th>Email</th><th>Country</th><th>Status</th><th>QR</th><th className="actions">Actions</th>
+                <th>Name</th>
+                <th>Email</th>
+                {fields.map((f) => <th key={f.key}>{f.label}</th>)}
+                <th>Status</th>
+                <th>QR</th>
+                <th className="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -281,7 +325,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
                   </td>
                   <td>{p.name}</td>
                   <td className="muted">{p.email}</td>
-                  <td>{p.country}</td>
+                  {fields.map((f) => <td key={f.key}>{pv(p, f.key)}</td>)}
                   <td>
                     {p.registered
                       ? <span className="badge badge--ok">✓ Checked in</span>
@@ -310,12 +354,9 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
       {showAdd && (
         <Modal title="Add participant" onClose={() => setShowAdd(false)}>
           <form onSubmit={addOne}>
-            <div className="field"><label>Name</label><input className="input" value={form.name} onChange={set("name")} required /></div>
-            <div className="field"><label>Email</label><input className="input" type="email" value={form.email} onChange={set("email")} required /></div>
-            <div className="row gap-12 wrap">
-              <div className="field grow" style={{ minWidth: 160 }}><label>Country</label><input className="input" value={form.country} onChange={set("country")} required /></div>
-              <div className="field grow" style={{ minWidth: 160 }}><label>Phone</label><input className="input" value={form.phone} onChange={set("phone")} required /></div>
-            </div>
+            <div className="field"><label>Name *</label><input className="input" value={form.name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div className="field"><label>Email *</label><input className="input" type="email" value={form.email} onChange={(e) => setEmail(e.target.value)} required /></div>
+            {fieldInputs(form.fields, setFieldVal)}
             <div className="row gap-8" style={{ justifyContent: "flex-end" }}>
               <button type="button" className="btn btn--ghost" onClick={() => setShowAdd(false)}>Cancel</button>
               <button className="btn btn--primary" disabled={busy}>{busy ? <span className="spinner" /> : "Add & email QR"}</button>
@@ -327,16 +368,11 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
       {editing && (
         <Modal title={`Edit ${editing.name}`} onClose={() => setEditing(null)}>
           <form onSubmit={saveEdit}>
-            <p className="hint" style={{ marginBottom: 12 }}>
-              Editing any field changes the QR code, so it must be sent again after saving.
-            </p>
-            <div className="field"><label>Name</label><input className="input" value={editForm.name} onChange={setEdit("name")} required /></div>
-            <div className="field"><label>Email</label><input className="input" type="email" value={editForm.email} onChange={setEdit("email")} required /></div>
-            <div className="row gap-12 wrap">
-              <div className="field grow" style={{ minWidth: 160 }}><label>Country</label><input className="input" value={editForm.country} onChange={setEdit("country")} required /></div>
-              <div className="field grow" style={{ minWidth: 160 }}><label>Phone</label><input className="input" value={editForm.phone} onChange={setEdit("phone")} required /></div>
-            </div>
-            <div className="row gap-8" style={{ justifyContent: "flex-end" }}>
+            <div className="field"><label>Name *</label><input className="input" value={editForm.name} onChange={(e) => setEName(e.target.value)} required /></div>
+            <div className="field"><label>Email *</label><input className="input" type="email" value={editForm.email} onChange={(e) => setEEmail(e.target.value)} required /></div>
+            {fieldInputs(editForm.fields, setEFieldVal)}
+            <p className="hint" style={{ marginTop: 4 }}>Changing name or email changes the QR — send it again after saving.</p>
+            <div className="row gap-8 mt-8" style={{ justifyContent: "flex-end" }}>
               <button type="button" className="btn btn--ghost" onClick={() => setEditing(null)}>Cancel</button>
               <button className="btn btn--primary" disabled={savingEdit}>{savingEdit ? <span className="spinner" /> : "Save changes"}</button>
             </div>
@@ -363,18 +399,18 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
             <>
               <div className="spec">
                 <strong className="small">Your CSV or Excel (.xlsx) file needs a header row with these columns:</strong>
-
                 <ul className="spec-list">
                   <li><code>name</code> — the participant&apos;s full name</li>
                   <li><code>email</code> — where their QR ticket is sent</li>
-                  <li><code>country</code></li>
-                  <li><code>phone</code></li>
+                  {fields.map((f) => (
+                    <li key={f.key}><code>{f.label}</code>{f.required ? " (required)" : ""}</li>
+                  ))}
                 </ul>
                 <p className="hint" style={{ marginTop: 10 }}>
-                  Column order doesn&apos;t matter and common aliases work (e.g. &ldquo;correo&rdquo;, &ldquo;teléfono&rdquo;).
-                  Duplicates are skipped. Imported people are added <strong>pending</strong> — no email is sent until you send it.
+                  Column order doesn&apos;t matter and common aliases work. Duplicates are skipped.
+                  Imported people are added <strong>pending</strong> — no email is sent until you send it.
                 </p>
-                <button className="btn btn--ghost btn--sm mt-8" onClick={() => downloadCsv("participants-template.csv", TEMPLATE_CSV)}>
+                <button className="btn btn--ghost btn--sm mt-8" onClick={() => downloadCsv("participants-template.csv", templateCsv(fields))}>
                   ⬇ Download template
                 </button>
               </div>
@@ -400,7 +436,6 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
                 hidden
                 onChange={onInputChange}
               />
-
             </>
           ) : (
             <>
@@ -410,10 +445,16 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
               </p>
               <div style={{ maxHeight: 240, overflowY: "auto", marginTop: 12 }}>
                 <table className="table">
-                  <thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Phone</th></tr></thead>
+                  <thead>
+                    <tr><th>Name</th><th>Email</th>{fields.map((f) => <th key={f.key}>{f.label}</th>)}</tr>
+                  </thead>
                   <tbody>
                     {importRows.slice(0, 50).map((r, i) => (
-                      <tr key={i}><td>{r.name}</td><td className="muted">{r.email}</td><td>{r.country}</td><td>{r.phone}</td></tr>
+                      <tr key={i}>
+                        <td>{r.name}</td>
+                        <td className="muted">{r.email}</td>
+                        {fields.map((f) => <td key={f.key}>{r[f.key] ?? ""}</td>)}
+                      </tr>
                     ))}
                   </tbody>
                 </table>

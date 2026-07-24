@@ -1,32 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import { MODE_LABELS, type EventMode } from "@/lib/types";
+import { MODE_LABELS, type EventField, type EventMode } from "@/lib/types";
 
 interface LinkInfo {
   orgName: string;
-  event: { name: string; description: string; date: string; location: string; mode: EventMode };
+  event: {
+    name: string;
+    description: string;
+    date: string;
+    location: string;
+    mode: EventMode;
+    fields: EventField[];
+  };
 }
 
-const BLANK = { name: "", email: "", country: "", phone: "" };
-type Field = keyof typeof BLANK;
-
-/** One field per step — the whole point is a calm, one-thing-at-a-time flow. */
-const STEPS: {
-  key: Field;
+interface Step {
+  key: string;
   label: string;
   hint: string;
   type: string;
-  placeholder: string;
-  autoComplete: string;
-}[] = [
-  { key: "name", label: "What's your full name?", hint: "As you'd like it on your ticket.", type: "text", placeholder: "Jane Doe", autoComplete: "name" },
-  { key: "email", label: "Your email", hint: "We'll send your check-in QR here.", type: "email", placeholder: "jane@example.com", autoComplete: "email" },
-  { key: "country", label: "Which country are you from?", hint: "", type: "text", placeholder: "United States", autoComplete: "country-name" },
-  { key: "phone", label: "Your phone number", hint: "In case the organizer needs to reach you.", type: "tel", placeholder: "+1 555 0100", autoComplete: "tel" },
-];
+  required: boolean;
+  custom: boolean;
+}
 
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
@@ -34,7 +32,9 @@ export default function SelfRegisterPage() {
   const { linkId } = useParams<{ linkId: string }>();
   const [info, setInfo] = useState<LinkInfo | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [form, setForm] = useState(BLANK);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [fieldVals, setFieldVals] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState<"fwd" | "back">("fwd");
   const [busy, setBusy] = useState(false);
@@ -46,17 +46,44 @@ export default function SelfRegisterPage() {
       .catch((err) => setLoadErr(err instanceof ApiError ? err.message : "This link is unavailable."));
   }, [linkId]);
 
-  const current = STEPS[step];
-  const value = form[current.key];
-  const isLast = step === STEPS.length - 1;
-  const valid = current.key === "email" ? emailOk(value) : value.trim().length > 0;
+  // Built-in name + email, then one step per team-defined field.
+  const steps: Step[] = useMemo(() => {
+    const base: Step[] = [
+      { key: "name", label: "What's your full name?", hint: "As you'd like it on your ticket.", type: "text", required: true, custom: false },
+      { key: "email", label: "Your email", hint: "We'll send your check-in QR here.", type: "email", required: true, custom: false },
+    ];
+    const extra: Step[] = (info?.event.fields ?? []).map((f) => ({
+      key: f.key,
+      label: f.label,
+      hint: f.required ? "" : "Optional",
+      type: "text",
+      required: f.required,
+      custom: true,
+    }));
+    return [...base, ...extra];
+  }, [info]);
 
-  const setField = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [current.key]: e.target.value }));
+  const current = steps[step];
+  const isLast = step === steps.length - 1;
+  const value = !current ? "" : current.key === "name" ? name : current.key === "email" ? email : (fieldVals[current.key] ?? "");
+  const valid = !current
+    ? false
+    : current.key === "email"
+    ? emailOk(value)
+    : current.required
+    ? value.trim().length > 0
+    : true;
+
+  const setValue = (v: string) => {
+    if (!current) return;
+    if (current.key === "name") setName(v);
+    else if (current.key === "email") setEmail(v);
+    else setFieldVals((f) => ({ ...f, [current.key]: v }));
+  };
 
   function goNext() {
     setDir("fwd");
-    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    setStep((s) => Math.min(s + 1, steps.length - 1));
   }
   function goBack() {
     setLoadErr(null);
@@ -71,7 +98,7 @@ export default function SelfRegisterPage() {
       const res = await api<{ alreadyRegistered: boolean }>(`/api/public/register/${linkId}`, {
         method: "POST",
         auth: false,
-        body: form,
+        body: { name, email, fields: fieldVals },
       });
       setDone({ already: res.alreadyRegistered });
     } catch (err) {
@@ -107,7 +134,7 @@ export default function SelfRegisterPage() {
             <p className="muted mt-8">
               {done.already
                 ? "This email was already registered for this event — check your inbox for the QR."
-                : `We emailed your check-in QR to ${form.email}. Show it at the door.`}
+                : `We emailed your check-in QR to ${email}. Show it at the door.`}
             </p>
           </div>
         ) : (
@@ -122,7 +149,7 @@ export default function SelfRegisterPage() {
             {info.event.description && <p className="muted small" style={{ whiteSpace: "pre-wrap" }}>{info.event.description}</p>}
 
             <div className="stepper__dots mt-16">
-              {STEPS.map((s, i) => (
+              {steps.map((s, i) => (
                 <span
                   key={s.key}
                   className={`stepper__dot ${i === step ? "stepper__dot--active" : i < step ? "stepper__dot--done" : ""}`}
@@ -132,17 +159,15 @@ export default function SelfRegisterPage() {
 
             <form onSubmit={onSubmit}>
               <div key={step} className={dir === "back" ? "step-anim--back" : "step-anim"}>
-                <div className="step__label">{current.label}</div>
+                <div className="step__label">{current.label}{current.required ? "" : " (optional)"}</div>
                 {current.hint && <p className="step__hint">{current.hint}</p>}
                 <input
                   className="input input--lg"
                   type={current.type}
                   value={value}
-                  onChange={setField}
-                  placeholder={current.placeholder}
-                  autoComplete={current.autoComplete}
+                  onChange={(e) => setValue(e.target.value)}
                   autoFocus
-                  required
+                  required={current.required}
                 />
               </div>
 
@@ -159,7 +184,7 @@ export default function SelfRegisterPage() {
               </div>
             </form>
 
-            <p className="step__count">Step {step + 1} of {STEPS.length}</p>
+            <p className="step__count">Step {step + 1} of {steps.length}</p>
           </div>
         )}
         <p className="center muted small mt-16">Powered by Convoca</p>
