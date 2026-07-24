@@ -11,12 +11,32 @@ interface LinkInfo {
 }
 
 const BLANK = { name: "", email: "", country: "", phone: "" };
+type Field = keyof typeof BLANK;
+
+/** One field per step — the whole point is a calm, one-thing-at-a-time flow. */
+const STEPS: {
+  key: Field;
+  label: string;
+  hint: string;
+  type: string;
+  placeholder: string;
+  autoComplete: string;
+}[] = [
+  { key: "name", label: "What's your full name?", hint: "As you'd like it on your ticket.", type: "text", placeholder: "Jane Doe", autoComplete: "name" },
+  { key: "email", label: "Your email", hint: "We'll send your check-in QR here.", type: "email", placeholder: "jane@example.com", autoComplete: "email" },
+  { key: "country", label: "Which country are you from?", hint: "", type: "text", placeholder: "United States", autoComplete: "country-name" },
+  { key: "phone", label: "Your phone number", hint: "In case the organizer needs to reach you.", type: "tel", placeholder: "+1 555 0100", autoComplete: "tel" },
+];
+
+const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 export default function SelfRegisterPage() {
   const { linkId } = useParams<{ linkId: string }>();
   const [info, setInfo] = useState<LinkInfo | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK);
+  const [step, setStep] = useState(0);
+  const [dir, setDir] = useState<"fwd" | "back">("fwd");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<null | { already: boolean }>(null);
 
@@ -26,12 +46,27 @@ export default function SelfRegisterPage() {
       .catch((err) => setLoadErr(err instanceof ApiError ? err.message : "This link is unavailable."));
   }, [linkId]);
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
+  const current = STEPS[step];
+  const value = form[current.key];
+  const isLast = step === STEPS.length - 1;
+  const valid = current.key === "email" ? emailOk(value) : value.trim().length > 0;
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  const setField = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [current.key]: e.target.value }));
+
+  function goNext() {
+    setDir("fwd");
+    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+  }
+  function goBack() {
+    setLoadErr(null);
+    setDir("back");
+    setStep((s) => Math.max(s - 1, 0));
+  }
+
+  async function submit() {
     setBusy(true);
+    setLoadErr(null);
     try {
       const res = await api<{ alreadyRegistered: boolean }>(`/api/public/register/${linkId}`, {
         method: "POST",
@@ -44,6 +79,13 @@ export default function SelfRegisterPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!valid) return;
+    if (isLast) void submit();
+    else goNext();
   }
 
   return (
@@ -79,18 +121,45 @@ export default function SelfRegisterPage() {
             </div>
             {info.event.description && <p className="muted small" style={{ whiteSpace: "pre-wrap" }}>{info.event.description}</p>}
 
-            <form onSubmit={submit} className="mt-16">
-              <div className="field"><label>Full name</label><input className="input" value={form.name} onChange={set("name")} required /></div>
-              <div className="field"><label>Email</label><input className="input" type="email" value={form.email} onChange={set("email")} required /></div>
-              <div className="row gap-12 wrap">
-                <div className="field grow" style={{ minWidth: 150 }}><label>Country</label><input className="input" value={form.country} onChange={set("country")} required /></div>
-                <div className="field grow" style={{ minWidth: 150 }}><label>Phone</label><input className="input" value={form.phone} onChange={set("phone")} required /></div>
+            <div className="stepper__dots mt-16">
+              {STEPS.map((s, i) => (
+                <span
+                  key={s.key}
+                  className={`stepper__dot ${i === step ? "stepper__dot--active" : i < step ? "stepper__dot--done" : ""}`}
+                />
+              ))}
+            </div>
+
+            <form onSubmit={onSubmit}>
+              <div key={step} className={dir === "back" ? "step-anim--back" : "step-anim"}>
+                <div className="step__label">{current.label}</div>
+                {current.hint && <p className="step__hint">{current.hint}</p>}
+                <input
+                  className="input input--lg"
+                  type={current.type}
+                  value={value}
+                  onChange={setField}
+                  placeholder={current.placeholder}
+                  autoComplete={current.autoComplete}
+                  autoFocus
+                  required
+                />
               </div>
-              {loadErr && <p className="small" style={{ color: "var(--danger)" }}>{loadErr}</p>}
-              <button className="btn btn--primary btn--block mt-8" disabled={busy}>
-                {busy ? <span className="spinner" /> : "Register & email my QR"}
-              </button>
+
+              {loadErr && <p className="small mt-8" style={{ color: "var(--danger)" }}>{loadErr}</p>}
+
+              <div className="row gap-8 mt-16">
+                {step > 0 && (
+                  <button type="button" className="btn btn--ghost" onClick={goBack} disabled={busy}>← Back</button>
+                )}
+                <div className="grow" />
+                <button className="btn btn--primary" disabled={!valid || busy}>
+                  {busy ? <span className="spinner" /> : isLast ? "Register & email my QR" : "Continue"}
+                </button>
+              </div>
             </form>
+
+            <p className="step__count">Step {step + 1} of {STEPS.length}</p>
           </div>
         )}
         <p className="center muted small mt-16">Powered by Convoca</p>

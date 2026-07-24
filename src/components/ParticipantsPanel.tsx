@@ -18,6 +18,8 @@ const BLANK = { name: "", email: "", country: "", phone: "" };
 type Fields = typeof BLANK;
 type BulkResult = { ok: number; failed: number; errors: string[] };
 
+const TEMPLATE_CSV = "name,email,country,phone\nJane Doe,jane@example.com,United States,+1 555 0100";
+
 export default function ParticipantsPanel({ eventId, participants, onChange }: Props) {
   const toast = useToast();
   const [query, setQuery] = useState("");
@@ -28,8 +30,10 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
   const [editForm, setEditForm] = useState<Fields>(BLANK);
   const [savingEdit, setSavingEdit] = useState(false);
   const [qrFor, setQrFor] = useState<Participant | null>(null);
+  const [showImport, setShowImport] = useState(false);
   const [importRows, setImportRows] = useState<Row[] | null>(null);
   const [importing, setImporting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<null | "resend" | "delete">(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -59,13 +63,9 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
   }
   function toggleAll() {
     setSelected((s) => {
-      if (filtered.every((p) => s.has(p.hash))) {
-        const next = new Set(s);
-        filtered.forEach((p) => next.delete(p.hash));
-        return next;
-      }
       const next = new Set(s);
-      filtered.forEach((p) => next.add(p.hash));
+      if (filtered.every((p) => next.has(p.hash))) filtered.forEach((p) => next.delete(p.hash));
+      else filtered.forEach((p) => next.add(p.hash));
       return next;
     });
   }
@@ -111,16 +111,37 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     }
   }
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // ── CSV import (instructions → drag & drop → preview → import) ──────────────
+  function openImport() {
+    setImportRows(null);
+    setShowImport(true);
+  }
+  function closeImport() {
+    setShowImport(false);
+    setImportRows(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+  function readFile(file: File) {
     const reader = new FileReader();
     reader.onload = () => {
       const rows = parseCsv(String(reader.result));
-      if (rows.length === 0) toast.push("No rows found. Need headers: name, email, country, phone.", "err");
+      if (rows.length === 0) {
+        toast.push("No rows found. Your CSV needs headers: name, email, country, phone.", "err");
+        return;
+      }
       setImportRows(rows);
     };
     reader.readAsText(file);
+  }
+  function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) readFile(file);
+  }
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) readFile(file);
   }
 
   async function commitImport() {
@@ -133,8 +154,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
       );
       toast.push(`Imported ${res.created} (pending) · skipped ${res.skipped}. Send QRs when ready.`, "ok");
       if (res.errors.length) toast.push(`${res.errors.length} row error(s).`, "err");
-      setImportRows(null);
-      if (fileRef.current) fileRef.current.value = "";
+      closeImport();
       onChange();
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Import failed.", "err");
@@ -196,8 +216,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="row gap-8 wrap">
-          <button className="btn btn--ghost btn--sm" onClick={() => fileRef.current?.click()}>Import CSV</button>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={onFile} />
+          <button className="btn btn--ghost btn--sm" onClick={openImport}>Import CSV</button>
           <button
             className="btn btn--ghost btn--sm"
             onClick={() => downloadCsv("participants.csv", participantsToCsv(participants))}
@@ -322,33 +341,77 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
         </Modal>
       )}
 
-      {importRows && (
+      {showImport && (
         <Modal
           title="Import participants"
-          onClose={() => setImportRows(null)}
-          footer={
+          onClose={closeImport}
+          footer={importRows ? (
             <>
-              <button className="btn btn--ghost" onClick={() => setImportRows(null)}>Cancel</button>
+              <button className="btn btn--ghost" onClick={() => setImportRows(null)}>Choose another file</button>
               <button className="btn btn--primary" onClick={commitImport} disabled={importing || importRows.length === 0}>
                 {importing ? <span className="spinner" /> : `Import ${importRows.length}`}
               </button>
             </>
-          }
+          ) : (
+            <button className="btn btn--ghost" onClick={closeImport}>Cancel</button>
+          )}
         >
-          <p className="muted">
-            Found <strong>{importRows.length}</strong> row(s). They&apos;re added as <strong>pending</strong> —
-            no email is sent now. Send each QR from the table when you&apos;re ready. Duplicates are skipped.
-          </p>
-          <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 12 }}>
-            <table className="table">
-              <thead><tr><th>Name</th><th>Email</th><th>Country</th></tr></thead>
-              <tbody>
-                {importRows.slice(0, 50).map((r, i) => (
-                  <tr key={i}><td>{r.name}</td><td className="muted">{r.email}</td><td>{r.country}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {!importRows ? (
+            <>
+              <div className="spec">
+                <strong className="small">Your CSV needs a header row with these columns:</strong>
+                <ul className="spec-list">
+                  <li><code>name</code> — the participant&apos;s full name</li>
+                  <li><code>email</code> — where their QR ticket is sent</li>
+                  <li><code>country</code></li>
+                  <li><code>phone</code></li>
+                </ul>
+                <p className="hint" style={{ marginTop: 10 }}>
+                  Column order doesn&apos;t matter and common aliases work (e.g. &ldquo;correo&rdquo;, &ldquo;teléfono&rdquo;).
+                  Duplicates are skipped. Imported people are added <strong>pending</strong> — no email is sent until you send it.
+                </p>
+                <button className="btn btn--ghost btn--sm mt-8" onClick={() => downloadCsv("participants-template.csv", TEMPLATE_CSV)}>
+                  ⬇ Download template
+                </button>
+              </div>
+
+              <div
+                className={`dropzone ${dragOver ? "dropzone--over" : ""}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => fileRef.current?.click()}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={onDrop}
+              >
+                <div className="dropzone__icon">📄</div>
+                <strong>Drag &amp; drop your CSV here</strong>
+                <span className="dropzone__hint">or click to browse</span>
+              </div>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={onInputChange} />
+            </>
+          ) : (
+            <>
+              <p className="muted">
+                Found <strong>{importRows.length}</strong> row(s). Duplicates are skipped; imported people are
+                added <strong>pending</strong> — send their QR when ready.
+              </p>
+              <div style={{ maxHeight: 240, overflowY: "auto", marginTop: 12 }}>
+                <table className="table">
+                  <thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Phone</th></tr></thead>
+                  <tbody>
+                    {importRows.slice(0, 50).map((r, i) => (
+                      <tr key={i}><td>{r.name}</td><td className="muted">{r.email}</td><td>{r.country}</td><td>{r.phone}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importRows.length > 50 && (
+                  <p className="hint" style={{ marginTop: 8 }}>…and {importRows.length - 50} more</p>
+                )}
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
