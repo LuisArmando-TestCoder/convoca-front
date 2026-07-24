@@ -31,8 +31,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <header className="topbar">
         <div className="container topbar__inner">
           <Link href="/dashboard" className="brand-mark" style={{ textDecoration: "none" }}>
-            <span className="brand-dot" /> Convoca
+            <span className="brand-dot" /> <span className="brand-mark__label">Convoca</span>
           </Link>
+
           <nav className="row gap-8" style={{ marginLeft: 12 }}>
             <Link href="/dashboard" className={`tab ${!isTeam ? "tab--active" : ""}`} style={{ border: "none" }}>
               Events
@@ -45,12 +46,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </nav>
           <div className="grow" />
           <div className="row gap-12">
-            <div className="stack" style={{ alignItems: "flex-end", lineHeight: 1.2 }}>
+            <div className="stack topbar__org" style={{ alignItems: "flex-end", lineHeight: 1.2 }}>
               <strong className="small">{me.org.name}</strong>
               <span className="muted small">{me.email} · {me.role}</span>
             </div>
             <button className="btn btn--ghost btn--sm" onClick={signOut}>Sign out</button>
           </div>
+
         </div>
       </header>
       <main className="container" style={{ padding: "28px 20px 60px" }}>

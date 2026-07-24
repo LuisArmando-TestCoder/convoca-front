@@ -331,6 +331,63 @@ h3 { font-size: 1rem; font-weight: 700; }
 .scan-result__name { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 6px; }
 @keyframes popIcon { from { transform: scale(0.3); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
+/* ── Scan result modal (fixed center, over the camera) ────────────────────────── */
+.scan-modal-overlay {
+  position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 20px;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  animation: fade 0.16s ease;
+}
+.scan-modal {
+  position: relative; width: 100%; max-width: 380px; text-align: center;
+  background: var(--white); border: 1px solid var(--border); border-radius: 24px;
+  padding: 32px 26px 26px; box-shadow: var(--shadow-lg);
+  animation: pop 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.scan-modal::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; border-radius: 24px 24px 0 0;
+  background: var(--sm-accent);
+}
+.scan-modal--success { --sm-accent: var(--success); }
+.scan-modal--duplicate { --sm-accent: var(--warn); }
+.scan-modal--not_found, .scan-modal--wrong_event { --sm-accent: var(--danger); }
+.scan-modal__badge {
+  width: 84px; height: 84px; margin: 4px auto 14px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 2.6rem; line-height: 1;
+  background: color-mix(in srgb, var(--sm-accent) 15%, transparent);
+  border: 2px solid color-mix(in srgb, var(--sm-accent) 45%, transparent);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--sm-accent) 8%, transparent);
+  animation: popIcon 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.scan-modal__title { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; color: var(--sm-accent); }
+.scan-modal__name { font-size: 1.15rem; font-weight: 700; margin-top: 6px; }
+.scan-modal__meta { color: var(--slate-500); font-size: 0.86rem; margin-top: 4px; }
+.scan-modal__confirm {
+  width: 100%; margin-top: 22px; border: none; cursor: pointer; font: inherit; font-weight: 700;
+  color: #fff; padding: 14px; border-radius: 14px; background: var(--sm-accent);
+  box-shadow: 0 10px 24px -10px var(--sm-accent); transition: filter 0.15s ease, transform 0.08s ease;
+}
+.scan-modal__confirm:hover { filter: brightness(1.06); }
+.scan-modal__confirm:active { transform: translateY(1px); }
+
+/* ── Responsive topbar ────────────────────────────────────────────────────────── */
+.topbar__org { min-width: 0; text-align: right; }
+.topbar__org strong, .topbar__org span {
+  display: block; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .topbar__inner { gap: 10px; }
+  .topbar .tab { padding: 8px 11px; }
+}
+@media (max-width: 540px) {
+  .topbar__org { display: none; }
+}
+@media (max-width: 380px) {
+  .brand-mark__label { display: none; }
+  .topbar .tab { padding: 7px 9px; font-size: 0.9rem; }
+}
+
+
 .spinner {
   width: 18px; height: 18px; border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
   border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;

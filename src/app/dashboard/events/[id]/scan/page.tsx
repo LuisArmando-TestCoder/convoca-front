@@ -6,12 +6,12 @@ import { useParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import type { CheckinResult, EventDoc } from "@/lib/types";
 
-
-const ICON: Record<CheckinResult["outcome"], string> = {
-  success: "✅",
-  duplicate: "⚠️",
-  not_found: "⛔",
-  wrong_event: "⛔",
+/** Per-outcome presentation for the confirm modal shown over the camera. */
+const OUTCOME: Record<CheckinResult["outcome"], { icon: string; title: string }> = {
+  success: { icon: "✅", title: "Checked in" },
+  duplicate: { icon: "⚠️", title: "Already registered" },
+  not_found: { icon: "🚫", title: "Not found" },
+  wrong_event: { icon: "🚫", title: "Wrong event" },
 };
 
 export default function ScanPage() {
@@ -22,8 +22,9 @@ export default function ScanPage() {
   const [result, setResult] = useState<CheckinResult | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scannerRef = useRef<any>(null);
-  const lastRef = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+
   const busyRef = useRef(false);
 
   useEffect(() => {
@@ -31,28 +32,37 @@ export default function ScanPage() {
   }, [id]);
 
   async function handleDecode(text: string) {
-    const code = text.trim().toLowerCase();
-    const now = Date.now();
-    // Debounce: ignore the same code re-read within 3s, or while a request is in flight.
+    // While a result modal is open (busy) we ignore every frame until confirmed.
     if (busyRef.current) return;
-    if (code === lastRef.current.code && now - lastRef.current.at < 3000) return;
-    lastRef.current = { code, at: now };
     busyRef.current = true;
+    const code = text.trim().toLowerCase();
     try {
       const res = await api<CheckinResult>(`/api/events/${id}/checkin`, { method: "POST", body: { hash: code } });
       setResult(res);
     } catch (err) {
       if (err instanceof ApiError) {
-        // 409 (duplicate) / 404 (not found) still carry the structured result.
         try {
-          setResult(JSON.parse((err as any).message));
+          // 409 (duplicate) / 404 (not found) still carry the structured result.
+          setResult(JSON.parse(err.message));
         } catch {
-          setResult({ outcome: err.status === 409 ? "duplicate" : "not_found", participant: null, registeredAt: null, message: err.message });
+          setResult({
+            outcome: err.status === 409 ? "duplicate" : "not_found",
+            participant: null,
+            registeredAt: null,
+            message: err.message,
+          });
         }
+      } else {
+        setResult({ outcome: "not_found", participant: null, registeredAt: null, message: "Scan failed. Try again." });
       }
-    } finally {
-      setTimeout(() => (busyRef.current = false), 900);
     }
+    // NOTE: busyRef stays true until the operator confirms the modal.
+  }
+
+  /** Dismiss the modal and resume scanning for the next QR. */
+  function confirmResult() {
+    setResult(null);
+    busyRef.current = false;
   }
 
   async function start() {
@@ -68,7 +78,7 @@ export default function ScanPage() {
         () => {},
       );
       setScanning(true);
-    } catch (err) {
+    } catch {
       setCamError("Couldn't access the camera. Grant permission and use HTTPS (or localhost).");
     }
   }
@@ -83,6 +93,8 @@ export default function ScanPage() {
   }
 
   useEffect(() => () => { void stop(); }, []);
+
+  const view = result ? OUTCOME[result.outcome] : null;
 
   return (
     <div style={{ maxWidth: 460, margin: "0 auto" }}>
@@ -103,21 +115,29 @@ export default function ScanPage() {
         </div>
       </div>
 
-      {result && (
-        <div className={`scan-result scan-result--${result.outcome} mt-16`}>
-          <div className="scan-result__icon">{ICON[result.outcome]}</div>
-          {result.participant && <div className="scan-result__name">{result.participant.name}</div>}
-          <p style={{ margin: "6px 0 0", fontWeight: 600 }}>{result.message}</p>
-          {result.participant && <p className="muted small">{result.participant.email} · {result.participant.country}</p>}
-          {result.outcome === "duplicate" && result.registeredAt && (
-            <p className="muted small">First checked in: {new Date(result.registeredAt).toLocaleString()}</p>
-          )}
-        </div>
-      )}
-
       <p className="muted small center mt-16">
         Point the camera at a participant&apos;s QR. Duplicate scans are flagged automatically.
       </p>
+
+      {result && view && (
+        <div className="scan-modal-overlay" role="dialog" aria-modal="true" aria-label={view.title}>
+          <div className={`scan-modal scan-modal--${result.outcome}`}>
+            <div className="scan-modal__badge">{view.icon}</div>
+            <div className="scan-modal__title">{view.title}</div>
+            {result.participant && <div className="scan-modal__name">{result.participant.name}</div>}
+            <p className="scan-modal__meta">{result.message}</p>
+            {result.participant && (
+              <p className="scan-modal__meta">{result.participant.email} · {result.participant.country}</p>
+            )}
+            {result.outcome === "duplicate" && result.registeredAt && (
+              <p className="scan-modal__meta">First checked in: {new Date(result.registeredAt).toLocaleString()}</p>
+            )}
+            <button className="scan-modal__confirm" onClick={confirmResult} autoFocus>
+              {result.outcome === "success" ? "Confirm & scan next" : "Got it — scan next"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
