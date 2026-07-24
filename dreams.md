@@ -43,3 +43,11 @@ linted).
 5. **Accessibility is decent but not audited.** Modals trap Escape + overlay click
    and use `aria-modal`, toasts are `aria-live`, but I didn't run an axe pass or
    verify full keyboard focus-trapping in the modal. Worth a sweep before launch.
+
+---
+
+## 2026-07-23 — Editable everything + pending-send UX
+
+- **`EventFields` extraction paid off:** one presentational component now backs both the create modal and the settings editor, so the two can't drift. Should have built it this way from day one.
+- **Pending vs. sent** is expressed purely from `qrSentAt` (no new field): a "QR" column badge + a Send/Resend button. Deriving UI state from existing data beat adding a status enum.
+- **Edit clarity:** the edit modal warns that changing a field voids the QR (because the hash changes) — surfacing the backend's identity model to the user instead of hiding it.
