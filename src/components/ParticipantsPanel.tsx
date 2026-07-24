@@ -16,6 +16,7 @@ interface Props {
 
 const BLANK = { name: "", email: "", country: "", phone: "" };
 type Fields = typeof BLANK;
+type BulkResult = { ok: number; failed: number; errors: string[] };
 
 export default function ParticipantsPanel({ eventId, participants, onChange }: Props) {
   const toast = useToast();
@@ -29,6 +30,8 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
   const [qrFor, setQrFor] = useState<Participant | null>(null);
   const [importRows, setImportRows] = useState<Row[] | null>(null);
   const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState<null | "resend" | "delete">(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
@@ -39,10 +42,34 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     );
   }, [participants, query]);
 
+  const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.hash));
+  const selectedList = useMemo(() => filtered.filter((p) => selected.has(p.hash)), [filtered, selected]);
+
   const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
   const setEdit = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setEditForm((f) => ({ ...f, [k]: e.target.value }));
+
+  function toggleOne(hash: string) {
+    setSelected((s) => {
+      const next = new Set(s);
+      next.has(hash) ? next.delete(hash) : next.add(hash);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((s) => {
+      if (filtered.every((p) => s.has(p.hash))) {
+        const next = new Set(s);
+        filtered.forEach((p) => next.delete(p.hash));
+        return next;
+      }
+      const next = new Set(s);
+      filtered.forEach((p) => next.add(p.hash));
+      return next;
+    });
+  }
+  const clearSelection = () => setSelected(new Set());
 
   async function addOne(e: React.FormEvent) {
     e.preventDefault();
@@ -137,6 +164,27 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     }
   }
 
+  async function runBulk(action: "resend" | "delete") {
+    const hashes = selectedList.map((p) => p.hash);
+    if (hashes.length === 0) return;
+    if (action === "delete" && !confirm(`Delete ${hashes.length} selected participant(s)?`)) return;
+    setBulkBusy(action);
+    try {
+      const res = await api<BulkResult>(`/api/events/${eventId}/participants/bulk`, {
+        method: "POST",
+        body: { action, hashes },
+      });
+      const verb = action === "resend" ? "sent" : "deleted";
+      toast.push(`${res.ok} ${verb}${res.failed ? ` · ${res.failed} failed` : ""}.`, res.failed ? "info" : "ok");
+      clearSelection();
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Bulk action failed.", "err");
+    } finally {
+      setBulkBusy(null);
+    }
+  }
+
   return (
     <div>
       <div className="row wrap gap-8" style={{ justifyContent: "space-between", marginBottom: 16 }}>
@@ -161,6 +209,20 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
         </div>
       </div>
 
+      {selected.size > 0 && (
+        <div className="bulkbar">
+          <strong className="small">{selected.size} selected</strong>
+          <div className="grow" />
+          <button className="btn btn--primary btn--sm" onClick={() => runBulk("resend")} disabled={bulkBusy !== null}>
+            {bulkBusy === "resend" ? <span className="spinner" /> : "Send QR"}
+          </button>
+          <button className="btn btn--danger btn--sm" onClick={() => runBulk("delete")} disabled={bulkBusy !== null}>
+            {bulkBusy === "delete" ? <span className="spinner" /> : "Delete"}
+          </button>
+          <button className="btn btn--ghost btn--sm" onClick={clearSelection} disabled={bulkBusy !== null}>Clear</button>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="card center" style={{ padding: 40 }}>
           <p className="muted">{participants.length === 0 ? "No participants yet. Add one or import a CSV." : "No matches."}</p>
@@ -170,12 +232,31 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    className="check"
+                    aria-label="Select all"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && !allSelected; }}
+                    onChange={toggleAll}
+                  />
+                </th>
                 <th>Name</th><th>Email</th><th>Country</th><th>Status</th><th>QR</th><th className="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
-                <tr key={p.hash}>
+                <tr key={p.hash} className={selected.has(p.hash) ? "row--selected" : undefined}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className="check"
+                      aria-label={`Select ${p.name}`}
+                      checked={selected.has(p.hash)}
+                      onChange={() => toggleOne(p.hash)}
+                    />
+                  </td>
                   <td>{p.name}</td>
                   <td className="muted">{p.email}</td>
                   <td>{p.country}</td>

@@ -387,6 +387,19 @@ h3 { font-size: 1rem; font-weight: 700; }
   .topbar .tab { padding: 7px 9px; font-size: 0.9rem; }
 }
 
+/* ── Bulk selection ───────────────────────────────────────────────────────────── */
+.bulkbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; margin-bottom: 14px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--brand) 12%, var(--white));
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  box-shadow: var(--shadow-sm); position: sticky; top: 72px; z-index: 10;
+  animation: pop 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.check { width: 17px; height: 17px; accent-color: var(--brand); cursor: pointer; vertical-align: middle; }
+.table tbody tr.row--selected { background: color-mix(in srgb, var(--brand) 9%, transparent); }
+
+
 
 .spinner {
   width: 18px; height: 18px; border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
