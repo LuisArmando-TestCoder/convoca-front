@@ -15,13 +15,17 @@ interface Props {
 }
 
 const BLANK = { name: "", email: "", country: "", phone: "" };
+type Fields = typeof BLANK;
 
 export default function ParticipantsPanel({ eventId, participants, onChange }: Props) {
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState(BLANK);
+  const [form, setForm] = useState<Fields>(BLANK);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<Participant | null>(null);
+  const [editForm, setEditForm] = useState<Fields>(BLANK);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [qrFor, setQrFor] = useState<Participant | null>(null);
   const [importRows, setImportRows] = useState<Row[] | null>(null);
   const [importing, setImporting] = useState(false);
@@ -35,8 +39,10 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     );
   }, [participants, query]);
 
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const set = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setEdit = (k: keyof Fields) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setEditForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function addOne(e: React.FormEvent) {
     e.preventDefault();
@@ -54,6 +60,27 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
       toast.push(err instanceof ApiError ? err.message : "Add failed.", "err");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function openEdit(p: Participant) {
+    setEditForm({ name: p.name, email: p.email, country: p.country, phone: p.phone });
+    setEditing(p);
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    setSavingEdit(true);
+    try {
+      await api(`/api/events/${eventId}/participants/${editing.hash}`, { method: "PATCH", body: editForm });
+      toast.push("Participant updated. Their QR changed — send it again.", "ok");
+      setEditing(null);
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Update failed.", "err");
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -77,7 +104,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
         `/api/events/${eventId}/participants/csv`,
         { method: "POST", body: { rows: importRows } },
       );
-      toast.push(`Imported ${res.created} · skipped ${res.skipped} · emailed ${res.emailed}.`, "ok");
+      toast.push(`Imported ${res.created} (pending) · skipped ${res.skipped}. Send QRs when ready.`, "ok");
       if (res.errors.length) toast.push(`${res.errors.length} row error(s).`, "err");
       setImportRows(null);
       if (fileRef.current) fileRef.current.value = "";
@@ -89,12 +116,13 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     }
   }
 
-  async function resend(p: Participant) {
+  async function sendQr(p: Participant) {
     try {
       await api(`/api/events/${eventId}/participants/${p.hash}/resend`, { method: "POST", body: {} });
-      toast.push(`QR re-sent to ${p.email}.`, "ok");
+      toast.push(`QR ${p.qrSentAt ? "re-sent" : "sent"} to ${p.email}.`, "ok");
+      onChange();
     } catch {
-      toast.push("Resend failed.", "err");
+      toast.push("Send failed.", "err");
     }
   }
 
@@ -142,7 +170,7 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           <table className="table">
             <thead>
               <tr>
-                <th>Name</th><th>Email</th><th>Country</th><th>Status</th><th className="actions">Actions</th>
+                <th>Name</th><th>Email</th><th>Country</th><th>Status</th><th>QR</th><th className="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -156,10 +184,16 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
                       ? <span className="badge badge--ok">✓ Checked in</span>
                       : <span className="badge badge--pending">Pending</span>}
                   </td>
+                  <td>
+                    {p.qrSentAt
+                      ? <span className="badge badge--info">Sent</span>
+                      : <span className="badge badge--pending">Not sent</span>}
+                  </td>
                   <td className="actions">
                     <div className="row gap-8" style={{ justifyContent: "flex-end" }}>
                       <button className="btn btn--ghost btn--sm" onClick={() => setQrFor(p)}>QR</button>
-                      <button className="btn btn--ghost btn--sm" onClick={() => resend(p)}>Resend</button>
+                      <button className="btn btn--primary btn--sm" onClick={() => sendQr(p)}>{p.qrSentAt ? "Resend" : "Send QR"}</button>
+                      <button className="btn btn--ghost btn--sm" onClick={() => openEdit(p)}>Edit</button>
                       <button className="btn btn--danger btn--sm" onClick={() => remove(p)}>Delete</button>
                     </div>
                   </td>
@@ -187,6 +221,26 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
         </Modal>
       )}
 
+      {editing && (
+        <Modal title={`Edit ${editing.name}`} onClose={() => setEditing(null)}>
+          <form onSubmit={saveEdit}>
+            <p className="hint" style={{ marginBottom: 12 }}>
+              Editing any field changes the QR code, so it must be sent again after saving.
+            </p>
+            <div className="field"><label>Name</label><input className="input" value={editForm.name} onChange={setEdit("name")} required /></div>
+            <div className="field"><label>Email</label><input className="input" type="email" value={editForm.email} onChange={setEdit("email")} required /></div>
+            <div className="row gap-12 wrap">
+              <div className="field grow" style={{ minWidth: 160 }}><label>Country</label><input className="input" value={editForm.country} onChange={setEdit("country")} required /></div>
+              <div className="field grow" style={{ minWidth: 160 }}><label>Phone</label><input className="input" value={editForm.phone} onChange={setEdit("phone")} required /></div>
+            </div>
+            <div className="row gap-8" style={{ justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn--ghost" onClick={() => setEditing(null)}>Cancel</button>
+              <button className="btn btn--primary" disabled={savingEdit}>{savingEdit ? <span className="spinner" /> : "Save changes"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {importRows && (
         <Modal
           title="Import participants"
@@ -201,8 +255,8 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           }
         >
           <p className="muted">
-            Found <strong>{importRows.length}</strong> row(s). Each gets a QR emailed on creation;
-            duplicates are skipped.
+            Found <strong>{importRows.length}</strong> row(s). They&apos;re added as <strong>pending</strong> —
+            no email is sent now. Send each QR from the table when you&apos;re ready. Duplicates are skipped.
           </p>
           <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 12 }}>
             <table className="table">

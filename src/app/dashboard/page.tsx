@@ -5,9 +5,11 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import Modal from "@/components/Modal";
-import { MODE_LABELS, type EventDoc, type EventMode } from "@/lib/types";
+import EventFields, { BLANK_EVENT } from "@/components/EventFields";
+import { MODE_LABELS, type EventDoc } from "@/lib/types";
 
-const BLANK = { name: "", description: "", location: "", mode: "in_person" as EventMode, date: "", quota: "" };
+const BLANK = BLANK_EVENT;
+
 
 export default function EventsPage() {
   const toast = useToast();
@@ -104,39 +106,9 @@ export default function EventsPage() {
       {showCreate && (
         <Modal title="New event" onClose={() => setShowCreate(false)}>
           <form onSubmit={create}>
-            <div className="field">
-              <label htmlFor="name">Event name</label>
-              <input id="name" className="input" value={form.name} onChange={set("name")} required />
-            </div>
-            <div className="field">
-              <label htmlFor="desc">Description</label>
-              <textarea id="desc" className="textarea" value={form.description} onChange={set("description")} />
-            </div>
-            <div className="row gap-12 wrap">
-              <div className="field grow" style={{ minWidth: 180 }}>
-                <label htmlFor="date">Date & time</label>
-                <input id="date" className="input" type="datetime-local" value={form.date} onChange={set("date")} />
-              </div>
-              <div className="field" style={{ minWidth: 140 }}>
-                <label htmlFor="mode">Mode</label>
-                <select id="mode" className="select" value={form.mode} onChange={set("mode")}>
-                  <option value="in_person">In person</option>
-                  <option value="virtual">Virtual</option>
-                  <option value="hybrid">Hybrid</option>
-                </select>
-              </div>
-            </div>
-            <div className="row gap-12 wrap">
-              <div className="field grow" style={{ minWidth: 180 }}>
-                <label htmlFor="loc">Location</label>
-                <input id="loc" className="input" value={form.location} onChange={set("location")} />
-              </div>
-              <div className="field" style={{ minWidth: 120 }}>
-                <label htmlFor="quota">Quota</label>
-                <input id="quota" className="input" type="number" min={1} value={form.quota} onChange={set("quota")} placeholder="∞" />
-              </div>
-            </div>
+            <EventFields form={form} set={set} />
             <div className="row gap-8 mt-8" style={{ justifyContent: "flex-end" }}>
+
               <button type="button" className="btn btn--ghost" onClick={() => setShowCreate(false)}>Cancel</button>
               <button className="btn btn--primary" disabled={busy}>{busy ? <span className="spinner" /> : "Create event"}</button>
             </div>

@@ -9,9 +9,19 @@ import { useSession } from "@/components/session";
 import StatsPanel from "@/components/StatsPanel";
 import ParticipantsPanel from "@/components/ParticipantsPanel";
 import LinksPanel from "@/components/LinksPanel";
+import EventFields, { type EventFormState } from "@/components/EventFields";
 import { MODE_LABELS, type EventDoc, type EventStats, type Participant } from "@/lib/types";
 
 type Tab = "overview" | "participants" | "registration" | "settings";
+
+const toForm = (ev: EventDoc): EventFormState => ({
+  name: ev.name,
+  description: ev.description ?? "",
+  location: ev.location ?? "",
+  mode: ev.mode,
+  date: ev.date ? ev.date.slice(0, 16) : "",
+  quota: ev.quota != null ? String(ev.quota) : "",
+});
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +34,8 @@ export default function EventDetailPage() {
   const [stats, setStats] = useState<EventStats | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState<EventFormState | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const loadParticipants = useCallback(async () => {
     const [{ participants }, statsRes] = await Promise.all([
@@ -39,6 +51,7 @@ export default function EventDetailPage() {
       try {
         const { event } = await api<{ event: EventDoc }>(`/api/events/${id}`);
         setEvent(event);
+        setSettings(toForm(event));
         await loadParticipants();
       } catch (err) {
         toast.push(err instanceof ApiError ? err.message : "Failed to load event.", "err");
@@ -49,6 +62,29 @@ export default function EventDetailPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const setField = (k: keyof EventFormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+      setSettings((f) => (f ? { ...f, [k]: e.target.value } : f));
+
+  async function saveSettings(e: React.FormEvent) {
+    e.preventDefault();
+    if (!settings) return;
+    setSaving(true);
+    try {
+      const { event: updated } = await api<{ event: EventDoc }>(`/api/events/${id}`, {
+        method: "PATCH",
+        body: { ...settings, quota: settings.quota ? Number(settings.quota) : null },
+      });
+      setEvent(updated);
+      setSettings(toForm(updated));
+      toast.push("Event saved.", "ok");
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Save failed.", "err");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function removeEvent() {
     if (!event || !confirm(`Delete "${event.name}" and all its participants?`)) return;
@@ -100,14 +136,18 @@ export default function EventDetailPage() {
         <ParticipantsPanel eventId={id} participants={participants} onChange={loadParticipants} />
       )}
       {tab === "registration" && <LinksPanel eventId={id} />}
-      {tab === "settings" && (
+      {tab === "settings" && settings && (
         <div className="stack gap-16" style={{ maxWidth: 560 }}>
-          {event.description && (
-            <div className="card">
-              <h3>Description</h3>
-              <p className="muted mt-8" style={{ whiteSpace: "pre-wrap" }}>{event.description}</p>
+          <form className="card" onSubmit={saveSettings}>
+            <h3 style={{ marginBottom: 14 }}>Event details</h3>
+            <EventFields form={settings} set={setField} />
+            <div className="row gap-8 mt-8" style={{ justifyContent: "flex-end" }}>
+              <button className="btn btn--primary" disabled={saving}>
+                {saving ? <span className="spinner" /> : "Save changes"}
+              </button>
             </div>
-          )}
+          </form>
+
           <div className="card">
             <h3>Danger zone</h3>
             <p className="muted small mt-8">Deleting removes the event and every participant record. This can&apos;t be undone.</p>
