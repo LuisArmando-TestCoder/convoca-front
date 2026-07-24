@@ -2,7 +2,8 @@
 
 import { useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { downloadCsv, parseCsv, participantsToCsv, type Row } from "@/lib/csv";
+import { downloadCsv, parseSpreadsheetFile, participantsToCsv, type Row } from "@/lib/csv";
+
 import { useToast } from "@/components/Toast";
 import Modal from "@/components/Modal";
 import QrModal from "@/components/QrModal";
@@ -121,18 +122,19 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
     setImportRows(null);
     if (fileRef.current) fileRef.current.value = "";
   }
-  function readFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const rows = parseCsv(String(reader.result));
+  async function readFile(file: File) {
+    try {
+      const rows = await parseSpreadsheetFile(file);
       if (rows.length === 0) {
-        toast.push("No rows found. Your CSV needs headers: name, email, country, phone.", "err");
+        toast.push("No rows found. Include columns: name, email, country, phone.", "err");
         return;
       }
       setImportRows(rows);
-    };
-    reader.readAsText(file);
+    } catch {
+      toast.push("Couldn't read that file. Use a .csv or .xlsx export.", "err");
+    }
   }
+
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) readFile(file);
@@ -216,7 +218,8 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="row gap-8 wrap">
-          <button className="btn btn--ghost btn--sm" onClick={openImport}>Import CSV</button>
+          <button className="btn btn--ghost btn--sm" onClick={openImport}>Import</button>
+
           <button
             className="btn btn--ghost btn--sm"
             onClick={() => downloadCsv("participants.csv", participantsToCsv(participants))}
@@ -359,7 +362,8 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
           {!importRows ? (
             <>
               <div className="spec">
-                <strong className="small">Your CSV needs a header row with these columns:</strong>
+                <strong className="small">Your CSV or Excel (.xlsx) file needs a header row with these columns:</strong>
+
                 <ul className="spec-list">
                   <li><code>name</code> — the participant&apos;s full name</li>
                   <li><code>email</code> — where their QR ticket is sent</li>
@@ -386,10 +390,17 @@ export default function ParticipantsPanel({ eventId, participants, onChange }: P
                 onDrop={onDrop}
               >
                 <div className="dropzone__icon">📄</div>
-                <strong>Drag &amp; drop your CSV here</strong>
-                <span className="dropzone__hint">or click to browse</span>
+                <strong>Drag &amp; drop your CSV or Excel file</strong>
+                <span className="dropzone__hint">or click to browse — .csv or .xlsx</span>
               </div>
-              <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={onInputChange} />
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                hidden
+                onChange={onInputChange}
+              />
+
             </>
           ) : (
             <>
