@@ -3,6 +3,15 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Lenis from "lenis";
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+  useReducedMotion,
+  type Variants,
+} from "framer-motion";
 import { getToken } from "@/lib/api";
 
 /* ── Funnel content (data-driven so slides stay consistent) ────────────────── */
@@ -38,12 +47,28 @@ const CAPABILITIES = [
   },
 ];
 
-/* ── Reusable pieces ───────────────────────────────────────────────────────── */
+const SLIDE_COUNT = 6;
+
+/* ── Motion primitives ─────────────────────────────────────────────────────── */
+const EASE = [0.22, 1, 0.36, 1] as const;
+
+const revealV: Variants = {
+  hidden: { opacity: 0, y: 34 },
+  show: (delay = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.75, ease: EASE, delay } }),
+};
+
 function Reveal({ children, delay = 0, className = "" }: { children: ReactNode; delay?: number; className?: string }) {
   return (
-    <div className={`reveal ${className}`} style={{ transitionDelay: `${delay}ms` }}>
+    <motion.div
+      className={className}
+      variants={revealV}
+      custom={delay}
+      initial="hidden"
+      whileInView="show"
+      viewport={{ once: true, amount: 0.35 }}
+    >
       {children}
-    </div>
+    </motion.div>
   );
 }
 
@@ -60,49 +85,86 @@ function CtaRow({ variant = "hero" }: { variant?: "hero" | "final" }) {
   );
 }
 
-const SLIDE_COUNT = 6;
-
 export default function Landing() {
   const router = useRouter();
-  const deckRef = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
+  const lenisRef = useRef<Lenis | null>(null);
   const [active, setActive] = useState(0);
+
+  // Pointer-reactive parallax (normalized -0.5..0.5 around viewport center).
+  const px = useMotionValue(0);
+  const py = useMotionValue(0);
+  const sx = useSpring(px, { stiffness: 55, damping: 18, mass: 0.6 });
+  const sy = useSpring(py, { stiffness: 55, damping: 18, mass: 0.6 });
+  const blobAX = useTransform(sx, (v) => v * 46);
+  const blobAY = useTransform(sy, (v) => v * 46);
+  const blobBX = useTransform(sx, (v) => v * -66);
+  const blobBY = useTransform(sy, (v) => v * -66);
+  const heroX = useTransform(sx, (v) => v * 16);
+  const heroY = useTransform(sy, (v) => v * 12);
 
   useEffect(() => {
     if (getToken()) router.replace("/dashboard");
   }, [router]);
 
-  // Reveal-on-scroll + active-slide tracking, scoped to the deck scroll container.
+  // Lenis smooth scroll — scoped to this page, torn down on unmount.
   useEffect(() => {
-    const deck = deckRef.current;
-    if (!deck) return;
+    if (reduced) return;
+    const lenis = new Lenis({ duration: 1.15, wheelMultiplier: 1, touchMultiplier: 1.4, smoothWheel: true });
+    lenisRef.current = lenis;
+    let raf = 0;
+    const loop = (t: number) => {
+      lenis.raf(t);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      cancelAnimationFrame(raf);
+      lenis.destroy();
+      lenisRef.current = null;
+    };
+  }, [reduced]);
 
-    const revealIO = new IntersectionObserver(
-      (entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add("is-in")),
-      { root: deck, threshold: 0.15 },
-    );
-    deck.querySelectorAll(".reveal").forEach((el) => revealIO.observe(el));
+  // Pointer tracking for parallax.
+  useEffect(() => {
+    if (reduced) return;
+    const onMove = (e: PointerEvent) => {
+      px.set(e.clientX / window.innerWidth - 0.5);
+      py.set(e.clientY / window.innerHeight - 0.5);
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [reduced, px, py]);
 
-    const slideIO = new IntersectionObserver(
+  // Active-section tracking for the nav dots.
+  useEffect(() => {
+    const io = new IntersectionObserver(
       (entries) =>
         entries.forEach((e) => {
           if (e.isIntersecting) setActive(Number((e.target as HTMLElement).dataset.index));
         }),
-      { root: deck, threshold: 0.5 },
+      { threshold: 0.55 },
     );
-    deck.querySelectorAll(".slide").forEach((el) => slideIO.observe(el));
-
-    return () => {
-      revealIO.disconnect();
-      slideIO.disconnect();
-    };
+    document.querySelectorAll(".slide").forEach((el) => io.observe(el));
+    return () => io.disconnect();
   }, []);
 
-  const go = (i: number) =>
-    deckRef.current?.querySelectorAll<HTMLElement>(".slide")[i]?.scrollIntoView({ behavior: "smooth" });
+  const go = (i: number) => {
+    const el = document.querySelectorAll<HTMLElement>(".slide")[i];
+    if (!el) return;
+    if (lenisRef.current) lenisRef.current.scrollTo(el, { offset: 0 });
+    else el.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
     <>
-      <header className="topbar topbar--float">
+      {/* Mouse-reactive ambient aura (fixed, behind everything) */}
+      <div className="aura" aria-hidden>
+        <motion.div className="aura__blob aura__blob--a" style={{ x: blobAX, y: blobAY }} />
+        <motion.div className="aura__blob aura__blob--b" style={{ x: blobBX, y: blobBY }} />
+      </div>
+
+      <header className="topbar">
         <div className="container topbar__inner">
           <div className="brand-mark">
             <span className="brand-dot" /> Convoca
@@ -125,40 +187,54 @@ export default function Landing() {
         ))}
       </nav>
 
-      <div className="deck" ref={deckRef}>
+      <main>
         {/* 0 — Hero + CTA (beginning) */}
         <section className="slide" data-index={0}>
-          <div className="slide__inner">
+          <motion.div className="slide__inner" style={{ x: heroX, y: heroY }}>
             <Reveal><span className="badge badge--info">Event check-in, reimagined</span></Reveal>
-            <Reveal delay={80}>
+            <Reveal delay={0.08}>
               <h1 className="display mt-16">
                 Every guest walks in, and it <span className="display--grad">just works.</span>
               </h1>
             </Reveal>
-            <Reveal delay={160}>
+            <Reveal delay={0.16}>
               <p className="lede">
                 Register people, email each one a unique QR ticket, and check them in with a phone camera.
                 No lines. No paper. No doubt about who showed up.
               </p>
             </Reveal>
-            <Reveal delay={240}><CtaRow variant="hero" /></Reveal>
-          </div>
-          <button className="scroll-cue" onClick={() => go(1)} aria-label="Scroll down">
+            <Reveal delay={0.24}><CtaRow variant="hero" /></Reveal>
+          </motion.div>
+          <motion.button
+            className="scroll-cue"
+            onClick={() => go(1)}
+            aria-label="Scroll down"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.8, duration: 0.6 }}
+          >
             <span>See how</span>
-            <svg className="scroll-cue__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-          </button>
+            <motion.svg
+              className="scroll-cue__chevron"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              animate={{ y: [0, 6, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </motion.svg>
+          </motion.button>
         </section>
 
         {/* 1 — The struggle */}
         <section className="slide" data-index={1}>
           <div className="slide__inner">
             <Reveal><span className="kicker">The door is where events go wrong</span></Reveal>
-            <Reveal delay={80}>
+            <Reveal delay={0.08}>
               <h2 className="display mt-16">You've felt this before.</h2>
             </Reveal>
             <div className="pains">
               {PAINS.map((p, i) => (
-                <Reveal key={p} delay={140 + i * 90} className="pain">
+                <Reveal key={p} delay={0.12 + i * 0.08} className="pain">
                   <span className="pain__x">✕</span>
                   <span>{p}</span>
                 </Reveal>
@@ -171,12 +247,12 @@ export default function Landing() {
         <section className="slide" data-index={2}>
           <div className="slide__inner">
             <Reveal><span className="kicker">There's a calmer way</span></Reveal>
-            <Reveal delay={80}>
+            <Reveal delay={0.08}>
               <h2 className="display mt-16">
                 What if the whole door was <span className="display--grad">one scan?</span>
               </h2>
             </Reveal>
-            <Reveal delay={160}>
+            <Reveal delay={0.16}>
               <p className="lede">
                 Convoca turns registration, tickets, check-in, and reporting into a single flow —
                 so event day feels effortless instead of frantic.
@@ -190,13 +266,13 @@ export default function Landing() {
           <section className="slide" data-index={3 + idx} key={c.kicker}>
             <div className="slide__inner">
               <Reveal><span className="kicker">{c.kicker}</span></Reveal>
-              <Reveal delay={80}>
+              <Reveal delay={0.08}>
                 <h2 className="display mt-16">{c.feel}</h2>
               </Reveal>
-              <Reveal delay={160}><p className="lede">{c.body}</p></Reveal>
+              <Reveal delay={0.16}><p className="lede">{c.body}</p></Reveal>
               <div className="caps-grid">
                 {c.points.map((pt, i) => (
-                  <Reveal key={pt} delay={220 + i * 70} className="cap-point">
+                  <Reveal key={pt} delay={0.2 + i * 0.07} className="cap-point">
                     <span className="cap-point__tick">✓</span>
                     <span>{pt}</span>
                   </Reveal>
@@ -210,24 +286,24 @@ export default function Landing() {
         <section className="slide" data-index={SLIDE_COUNT - 1}>
           <div className="slide__inner">
             <Reveal><span className="kicker">This is what calm looks like</span></Reveal>
-            <Reveal delay={80}>
+            <Reveal delay={0.08}>
               <h2 className="display mt-16">
                 Picture your next event <span className="display--grad">running itself.</span>
               </h2>
             </Reveal>
-            <Reveal delay={160}>
+            <Reveal delay={0.16}>
               <p className="lede">
                 Guests glide in. Your team scans with a smile. The numbers update themselves.
                 And you finally get to enjoy the event you built.
               </p>
             </Reveal>
-            <Reveal delay={240}><CtaRow variant="final" /></Reveal>
-            <Reveal delay={320}>
+            <Reveal delay={0.24}><CtaRow variant="final" /></Reveal>
+            <Reveal delay={0.32}>
               <p className="small muted mt-16">Free to start · No card required · Set up in minutes</p>
             </Reveal>
           </div>
         </section>
-      </div>
+      </main>
     </>
   );
 }
