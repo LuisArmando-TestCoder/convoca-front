@@ -519,9 +519,55 @@ html.lenis, html.lenis body { height: auto; }
   .caps-grid { grid-template-columns: 1fr; }
 }
 
+/* ── Participant filters ──────────────────────────────────────────────────────── */
+.btn--on {
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  color: var(--brand-700); background: color-mix(in srgb, var(--brand) 10%, var(--white));
+}
+.filterbar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px;
+  padding: 14px 16px; margin-bottom: 12px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--slate-050) 70%, transparent);
+  border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+  animation: pop 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.filterbar__group { display: flex; flex-direction: column; gap: 5px; }
+.filterbar__label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--slate-500); }
+.filterbar .select { min-width: 130px; }
+.selecthint { margin-bottom: 12px; align-items: center; }
+
+/* ── Live send progress ───────────────────────────────────────────────────────── */
+.sendbox { max-width: 560px; }
+.sendbar__track { height: 10px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--slate-300) 45%, transparent); }
+.sendbar__fill {
+  height: 100%; border-radius: 999px; background: var(--brand-grad);
+  box-shadow: 0 0 14px -2px color-mix(in srgb, var(--brand) 60%, transparent);
+  transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sendbar__fill--done { background: linear-gradient(135deg, #16a34a, #15803d); box-shadow: none; }
+.sendlog {
+  max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 10px;
+  background: color-mix(in srgb, var(--slate-050) 50%, transparent);
+}
+.sendlog__row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--white); border: 1px solid var(--border);
+  animation: sendIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sendlog__row--sent { border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.sendlog__row--failed { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 5%, var(--white)); }
+.sendlog__icon { width: 22px; display: grid; place-items: center; font-weight: 800; line-height: 1; }
+.sendlog__row--sent .sendlog__icon { color: var(--success); }
+.sendlog__row--failed .sendlog__icon { color: var(--danger); }
+.sendlog__who { display: flex; flex-direction: column; min-width: 0; }
+.sendlog__who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sendlog__reason { margin-left: auto; color: var(--danger); text-align: right; max-width: 45%; }
+@keyframes sendIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 
 
 .spinner {
+
   width: 18px; height: 18px; border: 2px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
   border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;
 }

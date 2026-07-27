@@ -13,6 +13,8 @@ import {
 import { useToast } from "@/components/Toast";
 import Modal from "@/components/Modal";
 import QrModal from "@/components/QrModal";
+import SendProgress, { type SendItem, type SendState } from "@/components/SendProgress";
+import { type StreamMsg, useEventStream } from "@/lib/eventStream";
 import type { EventField, Participant } from "@/lib/types";
 
 interface Props {
@@ -30,9 +32,22 @@ interface PForm {
 }
 const blankForm = (): PForm => ({ name: "", email: "", fields: {} });
 
+type QrFilter = "any" | "sent" | "unsent";
+type CheckFilter = "any" | "in" | "pending";
+type SourceFilter = "any" | "manual" | "csv" | "self";
+
 /** Reads a participant's value for a field key (custom map, or legacy column). */
 function pv(p: Participant, key: string): string {
   return p.fields?.[key] ?? (key === "country" ? p.country : key === "phone" ? p.phone : undefined) ?? "";
+}
+
+/** Upserts a live-send item by hash (replace if present, else append). */
+function upsertItem(items: SendItem[], next: SendItem): SendItem[] {
+  const i = items.findIndex((x) => x.hash === next.hash);
+  if (i === -1) return [...items, next];
+  const copy = items.slice();
+  copy[i] = next;
+  return copy;
 }
 
 export default function ParticipantsPanel({ eventId, fields, participants, onChange }: Props) {
@@ -50,19 +65,81 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
   const [importing, setImporting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkBusy, setBulkBusy] = useState<null | "resend" | "delete">(null);
+  const [bulkBusy, setBulkBusy] = useState<null | "delete">(null);
+  const [starting, setStarting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── Filters ───────────────────────────────────────────────────────────────
+  const [showFilters, setShowFilters] = useState(false);
+  const [qrFilter, setQrFilter] = useState<QrFilter>("any");
+  const [checkFilter, setCheckFilter] = useState<CheckFilter>("any");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("any");
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+
+  const activeFilters =
+    (qrFilter !== "any" ? 1 : 0) +
+    (checkFilter !== "any" ? 1 : 0) +
+    (sourceFilter !== "any" ? 1 : 0) +
+    Object.values(fieldFilters).filter((v) => v.trim()).length;
+
+  function resetFilters() {
+    setQrFilter("any");
+    setCheckFilter("any");
+    setSourceFilter("any");
+    setFieldFilters({});
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return participants;
-    return participants.filter((p) =>
-      [p.name, p.email, ...fields.map((f) => pv(p, f.key))].some((v) => v.toLowerCase().includes(q))
-    );
-  }, [participants, query, fields]);
+    return participants.filter((p) => {
+      if (
+        q &&
+        ![p.name, p.email, ...fields.map((f) => pv(p, f.key))].some((v) => v.toLowerCase().includes(q))
+      ) return false;
+      if (qrFilter === "sent" && !p.qrSentAt) return false;
+      if (qrFilter === "unsent" && p.qrSentAt) return false;
+      if (checkFilter === "in" && !p.registered) return false;
+      if (checkFilter === "pending" && p.registered) return false;
+      if (sourceFilter !== "any" && p.source !== sourceFilter) return false;
+      for (const [key, val] of Object.entries(fieldFilters)) {
+        const needle = val.trim().toLowerCase();
+        if (needle && !pv(p, key).toLowerCase().includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [participants, query, fields, qrFilter, checkFilter, sourceFilter, fieldFilters]);
 
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.hash));
-  const selectedList = useMemo(() => filtered.filter((p) => selected.has(p.hash)), [filtered, selected]);
+  const selectedList = useMemo(() => participants.filter((p) => selected.has(p.hash)), [participants, selected]);
+
+  // ── Live send (socket-driven) ───────────────────────────────────────────────
+  const [send, setSend] = useState<SendState | null>(null);
+
+  useEventStream(eventId, (m: StreamMsg) => {
+    if (m.t === "start") {
+      setSend({ total: m.total, by: m.by, items: [], done: false, sent: 0, failed: 0, reportedTo: null });
+    } else if (m.t === "item") {
+      setSend((s) => {
+        if (!s) return s;
+        const items = upsertItem(s.items, {
+          hash: m.hash,
+          name: m.name,
+          email: m.email,
+          status: m.status,
+          reason: m.reason,
+        });
+        return {
+          ...s,
+          items,
+          sent: items.filter((x) => x.status === "sent").length,
+          failed: items.filter((x) => x.status === "failed").length,
+        };
+      });
+    } else if (m.t === "done") {
+      setSend((s) => (s ? { ...s, done: true, sent: m.sent, failed: m.failed, reportedTo: m.reportedTo } : s));
+      onChange();
+    }
+  });
 
   const setName = (v: string) => setForm((f) => ({ ...f, name: v }));
   const setEmail = (v: string) => setForm((f) => ({ ...f, email: v }));
@@ -88,6 +165,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
       return next;
     });
   }
+  const selectAllMatching = () => setSelected(new Set(filtered.map((p) => p.hash)));
   const clearSelection = () => setSelected(new Set());
 
   async function addOne(e: React.FormEvent) {
@@ -209,22 +287,41 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
     }
   }
 
-  async function runBulk(action: "resend" | "delete") {
+  // Live, sequential send to every selected participant. Progress streams in via
+  // the WebSocket (see SendProgress); this just kicks it off.
+  async function sendSelected() {
     const hashes = selectedList.map((p) => p.hash);
     if (hashes.length === 0) return;
-    if (action === "delete" && !confirm(`Delete ${hashes.length} selected participant(s)?`)) return;
-    setBulkBusy(action);
+    setStarting(true);
+    try {
+      const res = await api<{ total: number; sent: number; failed: number; reportedTo: string | null }>(
+        `/api/events/${eventId}/participants/send`,
+        { method: "POST", body: { hashes } },
+      );
+      clearSelection();
+      toast.push(`${res.sent} sent${res.failed ? ` · ${res.failed} failed` : ""}.`, res.failed ? "info" : "ok");
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Send failed to start.", "err");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function runBulkDelete() {
+    const hashes = selectedList.map((p) => p.hash);
+    if (hashes.length === 0) return;
+    if (!confirm(`Delete ${hashes.length} selected participant(s)?`)) return;
+    setBulkBusy("delete");
     try {
       const res = await api<BulkResult>(`/api/events/${eventId}/participants/bulk`, {
         method: "POST",
-        body: { action, hashes },
+        body: { action: "delete", hashes },
       });
-      const verb = action === "resend" ? "sent" : "deleted";
-      toast.push(`${res.ok} ${verb}${res.failed ? ` · ${res.failed} failed` : ""}.`, res.failed ? "info" : "ok");
+      toast.push(`${res.ok} deleted${res.failed ? ` · ${res.failed} failed` : ""}.`, res.failed ? "info" : "ok");
       clearSelection();
       onChange();
     } catch (err) {
-      toast.push(err instanceof ApiError ? err.message : "Bulk action failed.", "err");
+      toast.push(err instanceof ApiError ? err.message : "Delete failed.", "err");
     } finally {
       setBulkBusy(null);
     }
@@ -249,7 +346,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
 
   return (
     <div>
-      <div className="row wrap gap-8" style={{ justifyContent: "space-between", marginBottom: 16 }}>
+      <div className="row wrap gap-8" style={{ justifyContent: "space-between", marginBottom: 12 }}>
         <input
           className="input"
           style={{ maxWidth: 260 }}
@@ -258,6 +355,12 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="row gap-8 wrap">
+          <button
+            className={`btn btn--ghost btn--sm ${showFilters || activeFilters ? "btn--on" : ""}`}
+            onClick={() => setShowFilters((v) => !v)}
+          >
+            ⚙ Filters{activeFilters ? ` · ${activeFilters}` : ""}
+          </button>
           <button className="btn btn--ghost btn--sm" onClick={openImport}>Import</button>
           <button
             className="btn btn--ghost btn--sm"
@@ -270,14 +373,73 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
         </div>
       </div>
 
+      {showFilters && (
+        <div className="filterbar">
+          <div className="filterbar__group">
+            <label className="filterbar__label">QR</label>
+            <select className="select" value={qrFilter} onChange={(e) => setQrFilter(e.target.value as QrFilter)}>
+              <option value="any">Any</option>
+              <option value="sent">Sent</option>
+              <option value="unsent">Not sent</option>
+            </select>
+          </div>
+          <div className="filterbar__group">
+            <label className="filterbar__label">Check-in</label>
+            <select className="select" value={checkFilter} onChange={(e) => setCheckFilter(e.target.value as CheckFilter)}>
+              <option value="any">Any</option>
+              <option value="in">Checked in</option>
+              <option value="pending">Pending</option>
+            </select>
+          </div>
+          <div className="filterbar__group">
+            <label className="filterbar__label">Source</label>
+            <select className="select" value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}>
+              <option value="any">Any</option>
+              <option value="manual">Manual</option>
+              <option value="csv">Imported</option>
+              <option value="self">Self-registered</option>
+            </select>
+          </div>
+          {fields.map((f) => (
+            <div className="filterbar__group" key={f.key}>
+              <label className="filterbar__label">{f.label}</label>
+              <input
+                className="input"
+                style={{ maxWidth: 160 }}
+                placeholder={`Any ${f.label.toLowerCase()}`}
+                value={fieldFilters[f.key] ?? ""}
+                onChange={(e) => setFieldFilters((s) => ({ ...s, [f.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+          {activeFilters > 0 && (
+            <button className="btn btn--ghost btn--sm" onClick={resetFilters}>Reset</button>
+          )}
+        </div>
+      )}
+
+      {participants.length > 0 && (
+        <div className="row wrap gap-8 selecthint">
+          <span className="small muted">
+            <strong>{filtered.length}</strong> match{activeFilters || query ? " current filters" : ""}
+            {selected.size ? ` · ${selected.size} selected` : ""}
+          </span>
+          <div className="grow" />
+          <button className="btn btn--ghost btn--sm" onClick={selectAllMatching} disabled={filtered.length === 0}>
+            Select all {filtered.length} matching
+          </button>
+          {selected.size > 0 && <button className="btn btn--ghost btn--sm" onClick={clearSelection}>Clear</button>}
+        </div>
+      )}
+
       {selected.size > 0 && (
         <div className="bulkbar">
           <strong className="small">{selected.size} selected</strong>
           <div className="grow" />
-          <button className="btn btn--primary btn--sm" onClick={() => runBulk("resend")} disabled={bulkBusy !== null}>
-            {bulkBusy === "resend" ? <span className="spinner" /> : "Send QR"}
+          <button className="btn btn--primary btn--sm" onClick={sendSelected} disabled={starting || bulkBusy !== null}>
+            {starting ? <span className="spinner" /> : `Send QR to ${selected.size}`}
           </button>
-          <button className="btn btn--danger btn--sm" onClick={() => runBulk("delete")} disabled={bulkBusy !== null}>
+          <button className="btn btn--danger btn--sm" onClick={runBulkDelete} disabled={bulkBusy !== null || starting}>
             {bulkBusy === "delete" ? <span className="spinner" /> : "Delete"}
           </button>
           <button className="btn btn--ghost btn--sm" onClick={clearSelection} disabled={bulkBusy !== null}>Clear</button>
@@ -468,6 +630,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
       )}
 
       {qrFor && <QrModal eventId={eventId} participant={qrFor} onClose={() => setQrFor(null)} />}
+      {send && <SendProgress state={send} onClose={() => setSend(null)} />}
     </div>
   );
 }
