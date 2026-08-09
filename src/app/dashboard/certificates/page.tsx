@@ -16,7 +16,7 @@ import {
   type Box,
 } from "@/lib/certificate";
 import { buildCertificatePdf, renderNameIntoImage } from "@/lib/certificatePdf";
-import { CERTIFICATE_FONTS, loadAllFonts, loadGoogleFont, type CertificateFont } from "@/lib/certificateFonts";
+import { CERTIFICATE_FONTS, loadAllFonts, loadFullFont, type CertificateFont } from "@/lib/certificateFonts";
 import FontPicker from "@/components/FontPicker";
 import "./certificate.css";
 
@@ -174,12 +174,15 @@ export default function CertificatesPage() {
   };
 
   // ── Font selection ─────────────────────────────────────────────────────────
+  // The selected font must be loaded in FULL (all glyphs) so the participant's
+  // name renders correctly into the image. A text-restricted file would fall
+  // back to a system font for any glyph outside the label.
   const selectFont = async (f: CertificateFont) => {
     setFont(f);
     setFontReady(false);
     setFontLoading(true);
     try {
-      await loadGoogleFont(f);
+      await loadFullFont(f);
       setFontReady(true);
     } catch (err) {
       toast.push(err instanceof Error ? err.message : "Failed to load font.", "err");
@@ -189,17 +192,24 @@ export default function CertificatesPage() {
     }
   };
 
-  // Lazy-load every font in a non-blocking background loop. Each option renders
-  // in its own font the moment it finishes downloading. The default font is
-  // loaded first so the preview works immediately.
+  // On mount: load the default font in FULL so the preview produces an image
+  // immediately, and lazy-load the rest (text-restricted) so each dropdown
+  // option renders in its own font as it becomes ready.
   useEffect(() => {
     let cancelled = false;
     const markReady = (family: string) => {
       if (!cancelled) setReadyFonts((prev) => new Set(prev).add(family));
     };
-    // Load the default first so the preview is usable right away.
-    loadGoogleFont(CERTIFICATE_FONTS[0]).then(() => markReady(CERTIFICATE_FONTS[0].family)).catch(() => {});
-    // Then load the rest in the background.
+    // Load the default in full → preview works right away.
+    loadFullFont(CERTIFICATE_FONTS[0])
+      .then(() => {
+        if (!cancelled) {
+          setFontReady(true);
+          markReady(CERTIFICATE_FONTS[0].family);
+        }
+      })
+      .catch(() => {});
+    // Then load the rest in the background (text-restricted, for the dropdown).
     loadAllFonts(markReady);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,7 +253,10 @@ export default function CertificatesPage() {
   };
 
   // ── Preview (name composited into the box) ─────────────────────────────────
-  const previewUrl = usePreview(image, lookedUp?.name ?? "", box, fontReady ? `"${font.family}", serif` : null);
+  // When no participant is looked up yet, render a sample name so the preview
+  // produces an image immediately once the box is drawn and the font is ready.
+  const previewName = lookedUp?.name ?? "Sample Name";
+  const previewUrl = usePreview(image, previewName, box, fontReady ? `"${font.family}", serif` : null);
 
   const metrics = box ? boxMetrics(box) : null;
 

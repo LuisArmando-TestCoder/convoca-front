@@ -1,12 +1,13 @@
 // ── Certificate fonts ────────────────────────────────────────────────────────
 // A curated, varied list of beautiful Google Fonts for the certificate name.
-// Each entry is loaded on demand via the FontFace API and used to render the
-// recipient's name into the certificate image.
 //
-// Performance: fonts are lazy-loaded in a non-blocking background loop. Each
-// request uses Google Fonts' `text=` parameter to restrict the character set to
-// just the font's own label, so the downloaded file is a few KB instead of the
-// full 50-100KB family. Options render in their own font the moment it loads.
+// Two loading modes:
+//  - `loadGoogleFont` (text-restricted): fetches only the label's characters so
+//    the dropdown options render in their own font with a few-KB download.
+//  - `loadFullFont` (full family): loads the complete font so the participant's
+//    name renders correctly into the certificate image. This is what the canvas
+//    renderer needs — a text-restricted file would fall back to a system font
+//    for any glyph outside the label.
 
 export interface CertificateFont {
   /** Display name shown in the picker. */
@@ -43,18 +44,20 @@ export const CERTIFICATE_FONTS: CertificateFont[] = [
   { label: "Inter", family: "Inter", spec: "Inter", vibe: "Neutral" },
 ];
 
-const loaded = new Set<string>();
+/** Fonts loaded in full (all glyphs) — safe for canvas rendering. */
+const fullLoaded = new Set<string>();
+/** Fonts loaded text-restricted — enough for the dropdown preview only. */
+const previewLoaded = new Set<string>();
 
 /**
- * Load a single Google Font via the FontFace API. Uses the `text=` parameter to
- * restrict the character set to just the label, keeping the file tiny. Idempotent.
+ * Load a single Google Font in FULL (all glyphs) via the FontFace API.
+ * This is required for rendering the participant's name into the image.
+ * Idempotent.
  */
-export async function loadGoogleFont(font: CertificateFont): Promise<string> {
-  if (loaded.has(font.family)) return font.family;
+export async function loadFullFont(font: CertificateFont): Promise<string> {
+  if (fullLoaded.has(font.family)) return font.family;
 
-  // Restrict the character set to the label text → a few KB instead of 50-100KB.
-  const text = encodeURIComponent(font.label);
-  const fontUrl = `https://fonts.googleapis.com/css2?family=${font.spec}:wght@400;700&display=swap&text=${text}`;
+  const fontUrl = `https://fonts.googleapis.com/css2?family=${font.spec}:wght@400;700&display=swap`;
   const response = await fetch(fontUrl);
   if (!response.ok) throw new Error(`Failed to load font "${font.label}".`);
   const cssText = await response.text();
@@ -68,15 +71,41 @@ export async function loadGoogleFont(font: CertificateFont): Promise<string> {
   document.fonts.add(loadedFont);
   await document.fonts.ready;
 
-  loaded.add(font.family);
+  fullLoaded.add(font.family);
   return font.family;
 }
 
 /**
- * Lazy-load every font in a non-blocking background loop. Each font is fetched
- * independently; the loop awaits each one so failures don't block the rest, and
- * the caller is notified as each font becomes ready (so options can render in
- * their own font the moment it loads).
+ * Load a single Google Font text-restricted to just the label's characters.
+ * Keeps the dropdown options tiny (a few KB). NOT sufficient for canvas
+ * rendering of arbitrary names — use `loadFullFont` for that.
+ * Idempotent.
+ */
+export async function loadGoogleFont(font: CertificateFont): Promise<string> {
+  if (previewLoaded.has(font.family)) return font.family;
+
+  const text = encodeURIComponent(font.label);
+  const fontUrl = `https://fonts.googleapis.com/css2?family=${font.spec}:wght@400;700&display=swap&text=${text}`;
+  const response = await fetch(fontUrl);
+  if (!response.ok) throw new Error(`Failed to load font "${font.label}".`);
+  const cssText = await response.text();
+
+  const urls = [...cssText.matchAll(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+)\)/g)].map((m) => m[1]);
+  if (urls.length === 0) throw new Error(`Could not find font file for "${font.label}".`);
+
+  const fontFace = new FontFace(font.family, `url(${urls[urls.length - 1]})`, { weight: "700" });
+  const loadedFont = await fontFace.load();
+  document.fonts.add(loadedFont);
+  await document.fonts.ready;
+
+  previewLoaded.add(font.family);
+  return font.family;
+}
+
+/**
+ * Lazy-load every font in a non-blocking background loop (text-restricted, for
+ * the dropdown preview). Each font is fetched independently; failures don't
+ * block the rest. The caller is notified as each font becomes ready.
  *
  * @param onReady Called with the family name as soon as that font finishes loading.
  */
