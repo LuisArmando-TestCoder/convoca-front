@@ -141,6 +141,9 @@ export default function CertificatesPage() {
   // dimensions, and the recipient name/email it was sent to.
   const [sendLog, setSendLog] = useState<SendRecord[]>([]);
   const [logOpen, setLogOpen] = useState(false);
+  // Record a send locally AND persist it to the org's send log in Firestore.
+  // The DB write is fire-and-forget so it never blocks the send loop; the local
+  // row updates immediately so the table feels instant.
   const recordSend = useCallback((rec: Omit<SendRecord, "id" | "at">) => {
     const entry: SendRecord = {
       ...rec,
@@ -148,6 +151,35 @@ export default function CertificatesPage() {
       at: new Date().toISOString(),
     };
     setSendLog((prev) => [entry, ...prev]);
+    api("/api/certificates/log", {
+      method: "POST",
+      body: {
+        name: rec.name,
+        email: rec.email,
+        font: rec.font,
+        box: rec.box,
+        centerX: rec.centerX,
+        centerY: rec.centerY,
+        maxWidth: rec.maxWidth,
+        maxHeight: rec.maxHeight,
+        status: rec.status,
+      },
+    }).catch(() => {
+      // Persistence is best-effort; the local row already reflects the send.
+    });
+  }, []);
+
+  // Load the org's persisted send history on mount.
+  useEffect(() => {
+    let cancelled = false;
+    api<{ sends: SendRecord[] }>("/api/certificates/log")
+      .then((res) => {
+        if (!cancelled) setSendLog(res.sends);
+      })
+      .catch(() => {
+        // Log is best-effort; the page still works without it.
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const imgRef = useRef<HTMLImageElement>(null);
