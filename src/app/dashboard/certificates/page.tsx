@@ -2,10 +2,12 @@
 
 // ── Certificate email tool ────────────────────────────────────────────────────
 // Drop a certificate image, draw the name box (or drag its two corner handles),
-// save it in memory, then look up a participant by email and send them a branded
-// email with their personalized certificate PDF attached.
+// save it in memory, then send personalized PDFs by email — to a single
+// participant (test) or to a filtered/unfiltered set of participants.
+// All tool state persists in sessionStorage, so switching dashboard tabs never
+// loses your work.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import { useSession } from "@/components/session";
@@ -25,7 +27,67 @@ interface LookupResult {
   email: string;
 }
 
+interface ListRow {
+  name: string;
+  email: string;
+  eventName: string;
+}
+
+interface BulkFailure {
+  name: string;
+  email: string;
+  reason: string;
+}
+
+interface BulkProgress {
+  total: number;
+  done: number;
+  sent: number;
+  failed: number;
+  current: string | null;
+}
+
 type DragMode = "draw" | "tl" | "br" | null;
+
+const CERT_KEY = "convoca_cert_state_v1";
+const MAX_BULK = 500;
+const MAX_IMAGE_DIM = 1800;
+
+interface CertSnapshot {
+  imageDataUrl: string | null;
+  box: Box | null;
+  saved: boolean;
+  fontFamily: string | null;
+  email: string;
+  lookedUp: LookupResult | null;
+  selected: string[];
+  search: string;
+}
+
+/** Downscale an image to a JPEG data URL (keeps sessionStorage small). */
+function fileToDataUrl(file: File, maxDim = MAX_IMAGE_DIM): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.9));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read that image."));
+    };
+    img.src = url;
+  });
+}
 
 export default function CertificatesPage() {
   const toast = useToast();
@@ -43,30 +105,50 @@ export default function CertificatesPage() {
   const [lookedUp, setLookedUp] = useState<LookupResult | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const [sending, setSending] = useState(false);
+
   const [font, setFont] = useState<CertificateFont>(CERTIFICATE_FONTS[0]);
   const [fontLoading, setFontLoading] = useState(false);
   const [fontReady, setFontReady] = useState(false);
   const [readyFonts, setReadyFonts] = useState<Set<string>>(new Set());
 
+  // Bulk-send state.
+  const [participants, setParticipants] = useState<ListRow[] | null>(null);
+  const [loadingParticipants, setLoadingParticipants] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sendingBulk, setSendingBulk] = useState(false);
+  const [bulk, setBulk] = useState<BulkProgress | null>(null);
+  const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([]);
+
   const imgRef = useRef<HTMLImageElement>(null);
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
+  const fontRef = useRef(font);
+  useEffect(() => { fontRef.current = font; }, [font]);
 
   // ── Image loading ──────────────────────────────────────────────────────────
-  const loadFile = useCallback((file: File) => {
+  const loadFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) {
       toast.push("Please drop an image file.", "err");
       return;
     }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      setImage(img);
-      setImageUrl(url);
-      setBox(null);
-      setSaved(false);
-      setLookedUp(null);
-    };
-    img.src = url;
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const img = new Image();
+      img.onload = () => {
+        setImage(img);
+        setImageUrl(dataUrl);
+        setBox(null);
+        setSaved(false);
+        setLookedUp(null);
+        setSelected(new Set());
+        setSearch("");
+        setBulk(null);
+        setBulkFailures([]);
+      };
+      img.src = dataUrl;
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Could not read that image.", "err");
+    }
   }, [toast]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -200,22 +282,181 @@ export default function CertificatesPage() {
     const markReady = (family: string) => {
       if (!cancelled) setReadyFonts((prev) => new Set(prev).add(family));
     };
-    // Load the default in full → preview works right away.
     loadFullFont(CERTIFICATE_FONTS[0])
       .then(() => {
         if (!cancelled) {
-          setFontReady(true);
           markReady(CERTIFICATE_FONTS[0].family);
+          if (fontRef.current === CERTIFICATE_FONTS[0]) setFontReady(true);
         }
       })
       .catch(() => {});
-    // Then load the rest in the background (text-restricted, for the dropdown).
     loadAllFonts(markReady);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Send test ──────────────────────────────────────────────────────────────
+  // ── Persistence (survives tab changes) ─────────────────────────────────────
+  // Restore the last session's snapshot on mount.
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      const raw = sessionStorage.getItem(CERT_KEY);
+      if (!raw) return;
+      const snap = JSON.parse(raw) as CertSnapshot;
+      if (snap.imageDataUrl) {
+        const img = new Image();
+        img.onload = () => {
+          if (cancelled) return;
+          setImage(img);
+          setImageUrl(snap.imageDataUrl!);
+          setBox(snap.box ?? null);
+          setSaved(Boolean(snap.saved));
+          setEmail(snap.email ?? "");
+          setLookedUp(snap.lookedUp ?? null);
+          setSelected(new Set(snap.selected ?? []));
+          setSearch(snap.search ?? "");
+          if (snap.fontFamily) {
+            const f = CERTIFICATE_FONTS.find((x) => x.family === snap.fontFamily);
+            if (f) {
+              setFont(f);
+              // Load the restored font in full so the preview renders correctly.
+              loadFullFont(f).then(() => {
+                if (!cancelled) setFontReady(true);
+              }).catch(() => {});
+            }
+          }
+        };
+        img.src = snap.imageDataUrl;
+      }
+    } catch {
+      // Corrupt state — start fresh.
+    }
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist the snapshot whenever any piece of tool state changes.
+  useEffect(() => {
+    const snap: CertSnapshot = {
+      imageDataUrl: imageUrl,
+      box,
+      saved,
+      fontFamily: font.family,
+      email,
+      lookedUp,
+      selected: Array.from(selected),
+      search,
+    };
+    try {
+      sessionStorage.setItem(CERT_KEY, JSON.stringify(snap));
+    } catch {
+      // Quota exceeded — the image is probably too large; skip persisting.
+    }
+  }, [imageUrl, box, saved, font, email, lookedUp, selected, search]);
+
+  // ── Participant list (bulk) ────────────────────────────────────────────────
+  const loadParticipants = useCallback(async () => {
+    setLoadingParticipants(true);
+    try {
+      const res = await api<{ participants: ListRow[] }>("/api/participants/list");
+      setParticipants(res.participants);
+      toast.push(`${res.participants.length} participants loaded.`, "ok");
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Failed to load participants.", "err");
+    } finally {
+      setLoadingParticipants(false);
+    }
+  }, [toast]);
+
+  const filtered = useMemo(() => {
+    if (!participants) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return participants;
+    return participants.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
+    );
+  }, [participants, search]);
+
+  const toggleSelect = (email: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const p of filtered) next.add(p.email);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  // ── Bulk send ──────────────────────────────────────────────────────────────
+  const sendBulk = async () => {
+    if (!image || !box) {
+      toast.push("Load an image and define the name box first.", "err");
+      return;
+    }
+    if (!saved) {
+      toast.push("Save the name box first.", "err");
+      return;
+    }
+    if (!fontReady) {
+      toast.push("Wait for the font to finish loading.", "err");
+      return;
+    }
+    const targets = participants?.filter((p) => selected.has(p.email)) ?? [];
+    if (targets.length === 0) {
+      toast.push("Select at least one participant.", "err");
+      return;
+    }
+    if (targets.length > MAX_BULK) {
+      toast.push(`Maximum ${MAX_BULK} recipients per run. Refine your filter.`, "err");
+      return;
+    }
+
+    setSendingBulk(true);
+    setBulkFailures([]);
+    setBulk({ total: targets.length, done: 0, sent: 0, failed: 0, current: targets[0].name });
+    const failures: BulkFailure[] = [];
+
+    for (let i = 0; i < targets.length; i++) {
+      const p = targets[i];
+      setBulk((b) => (b ? { ...b, current: p.name, done: i } : b));
+      try {
+        const pdfBase64 = await buildCertificatePdf(image, p.name, box, `"${font.family}", serif`);
+        await api("/api/certificates/send", {
+          method: "POST",
+          body: { to: p.email, name: p.name, pdfBase64 },
+        });
+        setBulk((b) => (b ? { ...b, sent: b.sent + 1, done: i + 1 } : b));
+      } catch (err) {
+        failures.push({ name: p.name, email: p.email, reason: err instanceof Error ? err.message : "Send failed" });
+        setBulk((b) => (b ? { ...b, failed: b.failed + 1, done: i + 1 } : b));
+      }
+      // Gentle throttle between sends to respect Gmail's burst limits.
+      if (i < targets.length - 1) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+
+    setBulkFailures(failures);
+    setBulk((b) => (b ? { ...b, current: null } : b));
+    setSendingBulk(false);
+    const ok = targets.length - failures.length;
+    toast.push(
+      failures.length === 0
+        ? `Sent ${ok} certificate${ok === 1 ? "" : "s"}.`
+        : `Sent ${ok} of ${targets.length}; ${failures.length} failed.`,
+      failures.length === 0 ? "ok" : "err",
+    );
+  };
+
+  // ── Send test (single) ─────────────────────────────────────────────────────
   const sendTest = async () => {
     if (!image || !box) {
       toast.push("Load an image and define the name box first.", "err");
@@ -260,8 +501,8 @@ export default function CertificatesPage() {
 
   const metrics = box ? boxMetrics(box) : null;
 
-  // Cleanup object URL on unmount.
-  useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
+  // Cleanup object URL on unmount (only for blob: URLs — data URLs are no-ops).
+  useEffect(() => () => { if (imageUrl?.startsWith("blob:")) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
   return (
     <div>
@@ -269,7 +510,7 @@ export default function CertificatesPage() {
         <div>
           <h1>Certificates</h1>
           <p className="muted mt-8">
-            Drop a certificate image, draw the name box, then send a personalized PDF by email.
+            Drop a certificate image, draw the name box, then send personalized PDFs by email.
           </p>
         </div>
       </div>
@@ -347,6 +588,10 @@ export default function CertificatesPage() {
                   setBox(null);
                   setSaved(false);
                   setLookedUp(null);
+                  setSelected(new Set());
+                  setSearch("");
+                  setBulk(null);
+                  setBulkFailures([]);
                 }}
               >
                 Change image
@@ -354,7 +599,7 @@ export default function CertificatesPage() {
             </div>
           </div>
 
-          {/* Side panel: metrics + lookup + send */}
+          {/* Side panel: metrics + lookup + bulk + send */}
           <div className="cert-side">
             <div className="cert-panel">
               <div className="cert-panel__title">Name box</div>
@@ -426,6 +671,100 @@ export default function CertificatesPage() {
                   <div className="cert-found__name">{lookedUp.name}</div>
                   <div className="cert-found__email">{lookedUp.email}</div>
                 </div>
+              )}
+            </div>
+
+            <div className="cert-panel">
+              <div className="cert-panel__title">Bulk send</div>
+              <div className="field mt-8">
+                <label htmlFor="cert-filter">Filter participants</label>
+                <input
+                  id="cert-filter"
+                  className="input"
+                  type="text"
+                  placeholder="Search name or email…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <button
+                className="btn btn--ghost btn--block"
+                onClick={loadParticipants}
+                disabled={loadingParticipants}
+              >
+                {loadingParticipants ? <span className="spinner spinner--dark" /> : participants ? "Refresh list" : "Load participants"}
+              </button>
+
+              {participants && (
+                <>
+                  <div className="cert-bulk__list">
+                    {filtered.slice(0, 300).map((p) => (
+                      <label key={p.email} className="cert-bulk__row">
+                        <input
+                          type="checkbox"
+                          className="cert-bulk__check"
+                          checked={selected.has(p.email)}
+                          onChange={() => toggleSelect(p.email)}
+                        />
+                        <span className="cert-bulk__name">{p.name}</span>
+                        <span className="cert-bulk__email">{p.email}</span>
+                      </label>
+                    ))}
+                    {filtered.length === 0 && (
+                      <p className="muted small" style={{ padding: "10px 4px" }}>No participants match.</p>
+                    )}
+                    {filtered.length > 300 && (
+                      <p className="muted small" style={{ padding: "10px 4px" }}>
+                        Showing first 300 of {filtered.length}. Refine your filter to narrow down.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="cert-bulk__actions">
+                    <button className="btn btn--ghost btn--sm" onClick={selectAllFiltered}>
+                      Select all ({filtered.length})
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={clearSelection}>
+                      Clear
+                    </button>
+                    <span className="cert-bulk__count">{selected.size} selected</span>
+                  </div>
+
+                  <button
+                    className="btn btn--primary btn--block cert-send"
+                    onClick={sendBulk}
+                    disabled={sendingBulk || selected.size === 0 || !box || !saved || !fontReady}
+                  >
+                    {sendingBulk
+                      ? <span className="spinner" />
+                      : `Send ${selected.size} certificate${selected.size === 1 ? "" : "s"}`}
+                  </button>
+
+                  {bulk && (
+                    <div className="cert-bulk__progress">
+                      <div className="cert-bulk__bar">
+                        <div
+                          className="cert-bulk__bar-fill"
+                          style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <div className="cert-bulk__meta">
+                        {bulk.done} / {bulk.total} · {bulk.sent} sent · {bulk.failed} failed
+                        {bulk.current && <span className="cert-bulk__current"> · {bulk.current}</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {bulkFailures.length > 0 && (
+                    <div className="cert-bulk__failures">
+                      {bulkFailures.map((f) => (
+                        <div key={f.email} className="cert-bulk__failure">
+                          <strong>{f.name}</strong> — {f.reason}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

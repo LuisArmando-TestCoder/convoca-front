@@ -408,6 +408,137 @@
   height: auto;
 }
 
+/* ── Bulk send panel ──────────────────────────────────────────────────────── */
+.cert-bulk__list {
+  margin-top: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--slate-050) 50%, transparent);
+  padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--brand) 40%, transparent) transparent;
+}
+.cert-bulk__list::-webkit-scrollbar {
+  width: 8px;
+}
+.cert-bulk__list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--brand) 40%, transparent);
+  border-radius: 8px;
+}
+
+.cert-bulk__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.cert-bulk__row:hover {
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+}
+
+.cert-bulk__check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.cert-bulk__name {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cert-bulk__email {
+  font-size: 0.72rem;
+  color: var(--slate-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.cert-bulk__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.cert-bulk__count {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.cert-bulk__progress {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 10%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+  border: 1px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  animation: certPop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cert-bulk__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--slate-200) 70%, transparent);
+  overflow: hidden;
+}
+.cert-bulk__bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand-grad);
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--brand) 70%, transparent);
+  transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cert-bulk__meta {
+  margin-top: 8px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--slate-600);
+  font-variant-numeric: tabular-nums;
+}
+.cert-bulk__current {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.cert-bulk__failures {
+  margin-top: 12px;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  padding: 8px 10px;
+}
+.cert-bulk__failure {
+  font-size: 0.76rem;
+  color: var(--slate-600);
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.cert-bulk__failure:last-child {
+  border-bottom: none;
+}
+.cert-bulk__failure strong {
+  color: var(--ink);
+}
+
 /* ── Send button glow ─────────────────────────────────────────────────────── */
 .cert-send {
   position: relative;
