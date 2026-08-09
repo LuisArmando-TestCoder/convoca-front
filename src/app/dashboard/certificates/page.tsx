@@ -64,7 +64,6 @@ interface SendRecord {
 type DragMode = "draw" | "tl" | "br" | null;
 
 const CERT_KEY = "convoca_cert_state_v1";
-const MAX_BULK = 500;
 const MAX_IMAGE_DIM = 1800;
 
 interface CertSnapshot {
@@ -469,6 +468,13 @@ export default function CertificatesPage() {
     });
   };
 
+  // "No filter" select-all: selects every participant, ignoring the search box.
+  // This is the escape hatch when you want to send to the whole list at once.
+  const selectAllNoFilter = () => {
+    if (!participants) return;
+    setSelected(new Set(participants.map((p) => p.email)));
+  };
+
   const clearSelection = () => setSelected(new Set());
 
   // ── Bulk send ──────────────────────────────────────────────────────────────
@@ -488,10 +494,6 @@ export default function CertificatesPage() {
     const targets = participants?.filter((p) => selected.has(p.email)) ?? [];
     if (targets.length === 0) {
       toast.push("Select at least one participant.", "err");
-      return;
-    }
-    if (targets.length > MAX_BULK) {
-      toast.push(`Maximum ${MAX_BULK} recipients per run. Refine your filter.`, "err");
       return;
     }
 
@@ -847,6 +849,13 @@ export default function CertificatesPage() {
                   <div className="cert-bulk__actions">
                     <button className="btn btn--ghost btn--sm" onClick={selectAllFiltered}>
                       Select all ({filtered.length})
+                    </button>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={selectAllNoFilter}
+                      disabled={!participants || participants.length === 0}
+                    >
+                      Select all (no filter)
                     </button>
                     <button className="btn btn--ghost btn--sm" onClick={clearSelection}>
                       Clear
