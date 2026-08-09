@@ -124,7 +124,6 @@
 
 .cert-panel {
   position: relative;
-  overflow: hidden;
   background:
     radial-gradient(300px 140px at 100% 0%, color-mix(in srgb, var(--brand) 8%, transparent), transparent 60%),
     var(--white);
