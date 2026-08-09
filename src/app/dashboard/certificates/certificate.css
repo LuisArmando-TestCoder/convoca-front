@@ -1,0 +1,271 @@
+/* ── Certificate editor ───────────────────────────────────────────────────────
+   Hyper-modern styles for the certificate tool: glassmorphism, gradient
+   accents, layered soft shadows, animated handles, and a polished two-column
+   layout. Composes the global design tokens (light + dark aware). */
+
+.cert-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 22px;
+  align-items: start;
+}
+
+/* ── Stage (image + draggable box) ─────────────────────────────────────── */
+.cert-stage-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(600px 300px at 100% 0%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 60%),
+    var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.cert-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.cert-stage img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: var(--slate-050);
+}
+
+/* ── The draggable box overlay ────────────────────────────────────────────── */
+.cert-box {
+  position: absolute;
+  border: 2px solid color-mix(in srgb, var(--brand) 85%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--brand) 16%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent),
+    0 0 24px -6px color-mix(in srgb, var(--brand) 45%, transparent),
+    inset 0 0 18px -8px color-mix(in srgb, var(--brand) 40%, transparent);
+  pointer-events: none;
+  box-sizing: border-box;
+  border-radius: 4px;
+  transition: box-shadow 0.2s ease;
+}
+
+/* ── Corner handles (top-left + bottom-right) ───────────────────────────── */
+.cert-handle {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: var(--brand-grad);
+  border: 2.5px solid #fff;
+  box-shadow:
+    0 4px 14px -2px color-mix(in srgb, var(--brand) 70%, transparent),
+    0 2px 6px rgba(11, 18, 32, 0.3);
+  cursor: nwse-resize;
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.15s ease;
+}
+.cert-handle::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+}
+.cert-handle:hover {
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow:
+    0 6px 20px -2px color-mix(in srgb, var(--brand) 80%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+.cert-handle:active {
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+/* ── Coordinate readout chip ──────────────────────────────────────────────── */
+.cert-coords {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  background: color-mix(in srgb, var(--ink) 72%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(11, 18, 32, 0.25);
+  pointer-events: none;
+  line-height: 1.5;
+  white-space: pre;
+  letter-spacing: 0.02em;
+}
+
+/* ── Side panel ────────────────────────────────────────────────────────────── */
+.cert-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cert-panel {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(300px 140px at 100% 0%, color-mix(in srgb, var(--brand) 8%, transparent), transparent 60%),
+    var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 18px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.cert-panel:hover {
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--border));
+  box-shadow: var(--shadow);
+}
+
+.cert-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--slate-500);
+}
+.cert-panel__title::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--brand-grad);
+  box-shadow: 0 0 10px -1px color-mix(in srgb, var(--brand) 60%, transparent);
+}
+
+/* ── Metrics grid ──────────────────────────────────────────────────────────── */
+.cert-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.cert-metric {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--slate-050) 70%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.cert-metric:hover {
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--border));
+  transform: translateY(-1px);
+}
+.cert-metric::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto auto;
+  width: 40px;
+  height: 40px;
+  background: radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 70%);
+}
+.cert-metric__label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate-500);
+}
+.cert-metric__value {
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Recipient found chip ─────────────────────────────────────────────────── */
+.cert-found {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--success) 14%, transparent), color-mix(in srgb, var(--brand) 8%, transparent));
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  animation: certPop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cert-found__name {
+  font-weight: 750;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+.cert-found__email {
+  color: var(--slate-500);
+  font-size: 0.8rem;
+  margin-top: 2px;
+}
+
+/* ── Preview ──────────────────────────────────────────────────────────────── */
+.cert-preview {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--slate-050);
+  box-shadow: var(--shadow-sm);
+}
+.cert-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ── Send button glow ─────────────────────────────────────────────────────── */
+.cert-send {
+  position: relative;
+  overflow: hidden;
+}
+.cert-send::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.18) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: certShine 3.2s ease-in-out infinite;
+}
+@keyframes certShine {
+  0%, 60% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes certPop {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .cert-editor { grid-template-columns: 1fr; }
+}

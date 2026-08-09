@@ -25,6 +25,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const isTeam = pathname.startsWith("/dashboard/team");
+  const isCertificates = pathname.startsWith("/dashboard/certificates");
+  const isEvents = !isTeam && !isCertificates;
 
   return (
     <MeContext.Provider value={me}>
@@ -35,7 +37,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
 
           <nav className="row gap-8" style={{ marginLeft: 12 }}>
-            <Link href="/dashboard" className={`tab ${!isTeam ? "tab--active" : ""}`} style={{ border: "none" }}>
+            <Link href="/dashboard" className={`tab ${isEvents ? "tab--active" : ""}`} style={{ border: "none" }}>
               Events
             </Link>
             {me.role === "owner" && (
@@ -43,6 +45,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 Team
               </Link>
             )}
+            <Link href="/dashboard/certificates" className={`tab ${isCertificates ? "tab--active" : ""}`} style={{ border: "none" }}>
+              Certificates
+            </Link>
           </nav>
           <div className="grow" />
           <div className="row gap-12">
