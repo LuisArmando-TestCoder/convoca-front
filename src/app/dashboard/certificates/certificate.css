@@ -227,6 +227,11 @@
   margin-top: 2px;
 }
 
+/* ── Saved confirmation ──────────────────────────────────────────────────── */
+.cert-saved {
+  animation: certPop 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* ── Preview ──────────────────────────────────────────────────────────────── */
 .cert-preview {
   position: relative;
