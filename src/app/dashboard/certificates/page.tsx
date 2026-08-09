@@ -127,7 +127,10 @@ export default function CertificatesPage() {
   const [fontReady, setFontReady] = useState(false);
   const [readyFonts, setReadyFonts] = useState<Set<string>>(new Set());
 
-  // Bulk-send state.
+  // Bulk-send state. Participants are scoped to the selected event, so the tool
+  // only ever emits certificates for the event you pick.
+  const [events, setEvents] = useState<{ id: string; name: string }[] | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<ListRow[] | null>(null);
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [search, setSearch] = useState("");
@@ -310,24 +313,28 @@ export default function CertificatesPage() {
   };
 
   // ── Participant lookup by email ────────────────────────────────────────────
+  // Searches the selected event's already-loaded participants client-side, so
+  // no extra request is needed and the lookup is always scoped to the event.
   const lookup = async () => {
-    if (!email.trim()) {
+    const needle = email.trim().toLowerCase();
+    if (!needle) {
       toast.push("Enter a recipient email first.", "err");
+      return;
+    }
+    if (!participants) {
+      toast.push("Load the event's participants first.", "err");
       return;
     }
     setLookingUp(true);
     setLookedUp(null);
-    try {
-      const res = await api<LookupResult>(
-        `/api/participants/lookup?email=${encodeURIComponent(email.trim())}`,
-      );
-      setLookedUp(res);
-      toast.push(`Found ${res.name}.`, "ok");
-    } catch (err) {
-      toast.push(err instanceof ApiError ? err.message : "Lookup failed.", "err");
-    } finally {
-      setLookingUp(false);
+    const hit = participants.find((p) => p.email.toLowerCase() === needle);
+    if (hit) {
+      setLookedUp({ name: hit.name, email: hit.email });
+      toast.push(`Found ${hit.name}.`, "ok");
+    } else {
+      toast.push("No participant with that email in this event.", "err");
     }
+    setLookingUp(false);
   };
 
   // ── Font selection ─────────────────────────────────────────────────────────
@@ -428,19 +435,59 @@ export default function CertificatesPage() {
     }
   }, [imageUrl, box, saved, font, email, lookedUp, selected, search]);
 
-  // ── Participant list (bulk) ────────────────────────────────────────────────
-  const loadParticipants = useCallback(async () => {
+  // ── Events + participant list (bulk) ───────────────────────────────────────
+  // Load the org's events so the user can pick which event to emit certificates
+  // for. Participants are then scoped to that event via the existing, deployed
+  // /api/events/:id/participants endpoint (no custom route needed).
+  const loadParticipantsForEvent = useCallback(async (eventId: string) => {
     setLoadingParticipants(true);
     try {
-      const res = await api<{ participants: ListRow[] }>("/api/participants/list");
-      setParticipants(res.participants);
-      toast.push(`${res.participants.length} participants loaded.`, "ok");
+      const res = await api<{ participants: { name: string; email: string }[] }>(
+        `/api/events/${eventId}/participants`,
+      );
+      const rows: ListRow[] = res.participants.map((p) => ({
+        name: p.name,
+        email: p.email,
+        eventName: "",
+      }));
+      setParticipants(rows);
+      toast.push(`${rows.length} participants loaded.`, "ok");
     } catch (err) {
       toast.push(err instanceof ApiError ? err.message : "Failed to load participants.", "err");
     } finally {
       setLoadingParticipants(false);
     }
   }, [toast]);
+
+  const loadEvents = useCallback(async () => {
+    try {
+      const res = await api<{ events: { id: string; name: string }[] }>("/api/events");
+      setEvents(res.events);
+      if (res.events.length > 0) {
+        const first = res.events[0].id;
+        setSelectedEventId(first);
+        await loadParticipantsForEvent(first);
+      } else {
+        setSelectedEventId(null);
+        setParticipants([]);
+      }
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Failed to load events.", "err");
+    }
+  }, [loadParticipantsForEvent, toast]);
+
+  const selectEvent = async (eventId: string) => {
+    setSelectedEventId(eventId);
+    setSelected(new Set());
+    setSearch("");
+    await loadParticipantsForEvent(eventId);
+  };
+
+  // Load events on mount so the selector is populated.
+  useEffect(() => {
+    loadEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     if (!participants) return [];
@@ -626,6 +673,7 @@ export default function CertificatesPage() {
   const previewUrl = usePreview(image, previewName, previewBox, fontReady ? `"${font.family}", serif` : null);
 
   const metrics = box ? boxMetrics(box) : null;
+  const selectedEventName = events?.find((e) => e.id === selectedEventId)?.name;
 
   // Cleanup object URL on unmount (only for blob: URLs — data URLs are no-ops).
   useEffect(() => () => { if (imageUrl?.startsWith("blob:")) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
@@ -792,6 +840,11 @@ export default function CertificatesPage() {
               <button className="btn btn--ghost btn--block" onClick={lookup} disabled={lookingUp}>
                 {lookingUp ? <span className="spinner spinner--dark" /> : "Look up name"}
               </button>
+              <span className="hint">
+                {selectedEventName
+                  ? `Searches participants in ${selectedEventName}`
+                  : "Select an event to search its participants"}
+              </span>
               {lookedUp && (
                 <div className="cert-found mt-8">
                   <div className="cert-found__name">{lookedUp.name}</div>
@@ -802,6 +855,22 @@ export default function CertificatesPage() {
 
             <div className="cert-panel">
               <div className="cert-panel__title">Bulk send</div>
+              <div className="field mt-8">
+                <label htmlFor="cert-event">Event</label>
+                <select
+                  id="cert-event"
+                  className="select"
+                  value={selectedEventId ?? ""}
+                  onChange={(e) => selectEvent(e.target.value)}
+                  disabled={!events || events.length === 0}
+                >
+                  {!events && <option value="">Loading events…</option>}
+                  {events && events.length === 0 && <option value="">No events yet</option>}
+                  {events?.map((ev) => (
+                    <option key={ev.id} value={ev.id}>{ev.name}</option>
+                  ))}
+                </select>
+              </div>
               <div className="field mt-8">
                 <label htmlFor="cert-filter">Filter participants</label>
                 <input
@@ -815,7 +884,7 @@ export default function CertificatesPage() {
               </div>
               <button
                 className="btn btn--ghost btn--block"
-                onClick={loadParticipants}
+                onClick={loadEvents}
                 disabled={loadingParticipants}
               >
                 {loadingParticipants ? <span className="spinner spinner--dark" /> : participants ? "Refresh list" : "Load participants"}
