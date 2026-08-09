@@ -16,6 +16,8 @@ import {
   type Box,
 } from "@/lib/certificate";
 import { buildCertificatePdf, renderNameIntoImage } from "@/lib/certificatePdf";
+import { CERTIFICATE_FONTS, loadAllFonts, loadGoogleFont, type CertificateFont } from "@/lib/certificateFonts";
+import FontPicker from "@/components/FontPicker";
 import "./certificate.css";
 
 interface LookupResult {
@@ -41,6 +43,10 @@ export default function CertificatesPage() {
   const [lookedUp, setLookedUp] = useState<LookupResult | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const [sending, setSending] = useState(false);
+  const [font, setFont] = useState<CertificateFont>(CERTIFICATE_FONTS[0]);
+  const [fontLoading, setFontLoading] = useState(false);
+  const [fontReady, setFontReady] = useState(false);
+  const [readyFonts, setReadyFonts] = useState<Set<string>>(new Set());
 
   const imgRef = useRef<HTMLImageElement>(null);
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
@@ -167,6 +173,38 @@ export default function CertificatesPage() {
     }
   };
 
+  // ── Font selection ─────────────────────────────────────────────────────────
+  const selectFont = async (f: CertificateFont) => {
+    setFont(f);
+    setFontReady(false);
+    setFontLoading(true);
+    try {
+      await loadGoogleFont(f);
+      setFontReady(true);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Failed to load font.", "err");
+      setFontReady(false);
+    } finally {
+      setFontLoading(false);
+    }
+  };
+
+  // Lazy-load every font in a non-blocking background loop. Each option renders
+  // in its own font the moment it finishes downloading. The default font is
+  // loaded first so the preview works immediately.
+  useEffect(() => {
+    let cancelled = false;
+    const markReady = (family: string) => {
+      if (!cancelled) setReadyFonts((prev) => new Set(prev).add(family));
+    };
+    // Load the default first so the preview is usable right away.
+    loadGoogleFont(CERTIFICATE_FONTS[0]).then(() => markReady(CERTIFICATE_FONTS[0].family)).catch(() => {});
+    // Then load the rest in the background.
+    loadAllFonts(markReady);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Send test ──────────────────────────────────────────────────────────────
   const sendTest = async () => {
     if (!image || !box) {
@@ -181,9 +219,13 @@ export default function CertificatesPage() {
       toast.push("Look up a participant by email first.", "err");
       return;
     }
+    if (!fontReady) {
+      toast.push("Wait for the font to finish loading.", "err");
+      return;
+    }
     setSending(true);
     try {
-      const pdfBase64 = await buildCertificatePdf(image, lookedUp.name, box);
+      const pdfBase64 = await buildCertificatePdf(image, lookedUp.name, box, `"${font.family}", serif`);
       await api("/api/certificates/send", {
         method: "POST",
         body: {
@@ -201,7 +243,7 @@ export default function CertificatesPage() {
   };
 
   // ── Preview (name composited into the box) ─────────────────────────────────
-  const previewUrl = usePreview(image, lookedUp?.name ?? "", box);
+  const previewUrl = usePreview(image, lookedUp?.name ?? "", box, fontReady ? `"${font.family}", serif` : null);
 
   const metrics = box ? boxMetrics(box) : null;
 
@@ -335,6 +377,22 @@ export default function CertificatesPage() {
             </div>
 
             <div className="cert-panel">
+              <div className="cert-panel__title">Font</div>
+              <div className="field mt-8">
+                <label htmlFor="cert-font">Name font</label>
+                <FontPicker
+                  value={font}
+                  readyFonts={readyFonts}
+                  loading={fontLoading}
+                  onChange={selectFont}
+                />
+                <span className="hint">
+                  {fontLoading ? "Loading font…" : fontReady ? `Using ${font.label}` : "Select a font"}
+                </span>
+              </div>
+            </div>
+
+            <div className="cert-panel">
               <div className="cert-panel__title">Recipient</div>
               <div className="field mt-8">
                 <label htmlFor="cert-email">Participant email</label>
@@ -370,7 +428,7 @@ export default function CertificatesPage() {
             <button
               className="btn btn--primary btn--block cert-send"
               onClick={sendTest}
-              disabled={sending || !lookedUp || !box || !saved}
+              disabled={sending || !lookedUp || !box || !saved || !fontReady}
             >
               {sending ? <span className="spinner" /> : "Send test email"}
             </button>
@@ -382,15 +440,20 @@ export default function CertificatesPage() {
 }
 
 /** Memoized preview: composite the looked-up name into the box. */
-function usePreview(image: HTMLImageElement | null, name: string, box: Box | null): string | null {
+function usePreview(
+  image: HTMLImageElement | null,
+  name: string,
+  box: Box | null,
+  fontFamily: string | null,
+): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!image || !box || !name) {
+    if (!image || !box || !name || !fontFamily) {
       setUrl(null);
       return;
     }
-    const dataUrl = renderNameIntoImage(image, name, box);
+    const dataUrl = renderNameIntoImage(image, name, box, fontFamily);
     setUrl(dataUrl);
-  }, [image, name, box]);
+  }, [image, name, box, fontFamily]);
   return url;
 }

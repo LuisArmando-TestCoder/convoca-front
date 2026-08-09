@@ -6,18 +6,21 @@
 import { PDFDocument } from "pdf-lib";
 import { fitTextInBox, type Box } from "./certificate";
 
-const FONT_FAMILY = '"Inter", ui-sans-serif, system-ui, sans-serif';
 const FONT_WEIGHT = 700;
 
 /**
  * Render the name into the image at the given box and return a PNG data URL.
  * The font is sized to fill the box height exactly, then shrunk if it overflows
  * the box width — always centered in the box.
+ *
+ * @param fontFamily CSS font family (e.g. `"Playfair Display", serif`). The font
+ *   must already be loaded via the FontFace API before calling.
  */
 export function renderNameIntoImage(
   image: HTMLImageElement,
   name: string,
   box: Box,
+  fontFamily: string,
 ): string {
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
@@ -26,9 +29,9 @@ export function renderNameIntoImage(
   ctx.drawImage(image, 0, 0);
 
   if (name.trim()) {
-    const fit = fitTextInBox(ctx, name.trim(), box, FONT_FAMILY, FONT_WEIGHT);
+    const fit = fitTextInBox(ctx, name.trim(), box, fontFamily, FONT_WEIGHT);
     if (fit.fontSize > 0) {
-      ctx.font = `${FONT_WEIGHT} ${fit.fontSize}px ${FONT_FAMILY}`;
+      ctx.font = `${FONT_WEIGHT} ${fit.fontSize}px ${fontFamily}`;
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
       ctx.fillStyle = "#0b1220"; // ink — matches the design system
@@ -47,8 +50,9 @@ export async function buildCertificatePdf(
   image: HTMLImageElement,
   name: string,
   box: Box,
+  fontFamily: string,
 ): Promise<string> {
-  const pngDataUrl = renderNameIntoImage(image, name, box);
+  const pngDataUrl = renderNameIntoImage(image, name, box, fontFamily);
   const pngBytes = Uint8Array.from(atob(pngDataUrl.split(",")[1]!), (c) => c.charCodeAt(0));
 
   const pdf = await PDFDocument.create();
