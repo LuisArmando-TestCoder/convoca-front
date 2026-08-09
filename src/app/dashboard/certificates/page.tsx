@@ -47,6 +47,20 @@ interface BulkProgress {
   current: string | null;
 }
 
+interface SendRecord {
+  id: string;
+  at: string;
+  name: string;
+  email: string;
+  font: string;
+  box: Box;
+  centerX: number;
+  centerY: number;
+  maxWidth: number;
+  maxHeight: number;
+  status: "sent" | "failed";
+}
+
 type DragMode = "draw" | "tl" | "br" | null;
 
 const CERT_KEY = "convoca_cert_state_v1";
@@ -100,6 +114,9 @@ export default function CertificatesPage() {
   const [saved, setSaved] = useState(false);
   const [dragging, setDragging] = useState<DragMode>(null);
   const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
+  // The box the preview is composited from. Only updated on mouse up, so the
+  // expensive canvas render never runs mid-drag (which would block the loop).
+  const [previewBox, setPreviewBox] = useState<Box | null>(null);
 
   const [email, setEmail] = useState("");
   const [lookedUp, setLookedUp] = useState<LookupResult | null>(null);
@@ -120,8 +137,24 @@ export default function CertificatesPage() {
   const [bulk, setBulk] = useState<BulkProgress | null>(null);
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([]);
 
+  // Send log: every send is recorded with the font, box positions, center,
+  // dimensions, and the recipient name/email it was sent to.
+  const [sendLog, setSendLog] = useState<SendRecord[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
+  const recordSend = useCallback((rec: Omit<SendRecord, "id" | "at">) => {
+    const entry: SendRecord = {
+      ...rec,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      at: new Date().toISOString(),
+    };
+    setSendLog((prev) => [entry, ...prev]);
+  }, []);
+
   const imgRef = useRef<HTMLImageElement>(null);
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
+  // Last pointer position in image coordinates, so the preview can be composited
+  // from the final box on mouse up (React state may not have flushed yet).
+  const lastPtRef = useRef<{ x: number; y: number } | null>(null);
   const fontRef = useRef(font);
   useEffect(() => { fontRef.current = font; }, [font]);
 
@@ -206,14 +239,24 @@ export default function CertificatesPage() {
       const m = imageMetrics();
       if (!m || !anchorRef.current) return;
       const pt = clientToImage(e.clientX, e.clientY, m.rect, m);
+      lastPtRef.current = pt;
       setCoords(pt);
       setBox(normalizeBox(pt, anchorRef.current));
     };
 
     const onUp = () => {
+      // Capture the anchor and last pointer position before clearing them, so
+      // the preview can be composited from the final box once the drag ends
+      // (never mid-drag).
+      const anchor = anchorRef.current;
+      const pt = lastPtRef.current;
       setDragging(null);
       setCoords(null);
       anchorRef.current = null;
+      lastPtRef.current = null;
+      if (anchor && pt) {
+        setPreviewBox(normalizeBox(pt, anchor));
+      }
     };
 
     window.addEventListener("pointermove", onMove);
@@ -231,6 +274,7 @@ export default function CertificatesPage() {
       return;
     }
     setSaved(true);
+    setPreviewBox(box);
     toast.push("Name box saved for this session.", "ok");
   };
 
@@ -427,15 +471,38 @@ export default function CertificatesPage() {
     for (let i = 0; i < targets.length; i++) {
       const p = targets[i];
       setBulk((b) => (b ? { ...b, current: p.name, done: i } : b));
+      const m = boxMetrics(box);
       try {
         const pdfBase64 = await buildCertificatePdf(image, p.name, box, `"${font.family}", serif`);
         await api("/api/certificates/send", {
           method: "POST",
           body: { to: p.email, name: p.name, pdfBase64 },
         });
+        recordSend({
+          name: p.name,
+          email: p.email,
+          font: font.label,
+          box,
+          centerX: m.centerX,
+          centerY: m.centerY,
+          maxWidth: m.maxWidth,
+          maxHeight: m.maxHeight,
+          status: "sent",
+        });
         setBulk((b) => (b ? { ...b, sent: b.sent + 1, done: i + 1 } : b));
       } catch (err) {
         failures.push({ name: p.name, email: p.email, reason: err instanceof Error ? err.message : "Send failed" });
+        recordSend({
+          name: p.name,
+          email: p.email,
+          font: font.label,
+          box,
+          centerX: m.centerX,
+          centerY: m.centerY,
+          maxWidth: m.maxWidth,
+          maxHeight: m.maxHeight,
+          status: "failed",
+        });
         setBulk((b) => (b ? { ...b, failed: b.failed + 1, done: i + 1 } : b));
       }
       // Gentle throttle between sends to respect Gmail's burst limits.
@@ -475,6 +542,7 @@ export default function CertificatesPage() {
       return;
     }
     setSending(true);
+    const m = boxMetrics(box);
     try {
       const pdfBase64 = await buildCertificatePdf(image, lookedUp.name, box, `"${font.family}", serif`);
       await api("/api/certificates/send", {
@@ -485,8 +553,30 @@ export default function CertificatesPage() {
           pdfBase64,
         },
       });
+      recordSend({
+        name: lookedUp.name,
+        email: lookedUp.email,
+        font: font.label,
+        box,
+        centerX: m.centerX,
+        centerY: m.centerY,
+        maxWidth: m.maxWidth,
+        maxHeight: m.maxHeight,
+        status: "sent",
+      });
       toast.push(`Certificate sent to ${lookedUp.email}.`, "ok");
     } catch (err) {
+      recordSend({
+        name: lookedUp.name,
+        email: lookedUp.email,
+        font: font.label,
+        box,
+        centerX: m.centerX,
+        centerY: m.centerY,
+        maxWidth: m.maxWidth,
+        maxHeight: m.maxHeight,
+        status: "failed",
+      });
       toast.push(err instanceof ApiError ? err.message : "Send failed.", "err");
     } finally {
       setSending(false);
@@ -497,7 +587,9 @@ export default function CertificatesPage() {
   // When no participant is looked up yet, render a sample name so the preview
   // produces an image immediately once the box is drawn and the font is ready.
   const previewName = lookedUp?.name ?? "Sample Name";
-  const previewUrl = usePreview(image, previewName, box, fontReady ? `"${font.family}", serif` : null);
+  // The preview composites from `previewBox` (only updated on mouse up / save),
+  // never from `box` (which changes on every pointermove during a drag).
+  const previewUrl = usePreview(image, previewName, previewBox, fontReady ? `"${font.family}", serif` : null);
 
   const metrics = box ? boxMetrics(box) : null;
 
@@ -787,6 +879,70 @@ export default function CertificatesPage() {
           </div>
         </div>
       )}
+
+      {/* Send log: every send recorded with font, box positions, center,
+          dimensions, and the recipient name/email it was sent to. */}
+      <div className="cert-log">
+        <div className="cert-log__head">
+          <div>
+            <h2>Send log</h2>
+            <p className="muted small">
+              {sendLog.length} send{sendLog.length === 1 ? "" : "s"} recorded · font, box, center, dimensions, recipient
+            </p>
+          </div>
+          <button
+            className="btn btn--ghost btn--sm"
+            onClick={() => setLogOpen((o) => !o)}
+            disabled={sendLog.length === 0}
+          >
+            {logOpen ? "Hide" : "Show"}
+          </button>
+        </div>
+
+        {logOpen && sendLog.length > 0 && (
+          <div className="cert-log__table-wrap">
+            <table className="cert-log__table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Recipient</th>
+                  <th>Font</th>
+                  <th>Box (x1,y1 → x2,y2)</th>
+                  <th>Center</th>
+                  <th>Max W × H</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sendLog.map((r) => (
+                  <tr key={r.id}>
+                    <td className="cert-log__mono">{new Date(r.at).toLocaleString()}</td>
+                    <td>
+                      <div className="cert-log__name">{r.name}</div>
+                      <div className="cert-log__email">{r.email}</div>
+                    </td>
+                    <td>{r.font}</td>
+                    <td className="cert-log__mono">
+                      ({Math.round(r.box.x1)}, {Math.round(r.box.y1)}) → ({Math.round(r.box.x2)}, {Math.round(r.box.y2)})
+                    </td>
+                    <td className="cert-log__mono">
+                      ({Math.round(r.centerX)}, {Math.round(r.centerY)})
+                    </td>
+                    <td className="cert-log__mono">
+                      {Math.round(r.maxWidth)} × {Math.round(r.maxHeight)}
+                    </td>
+                    <td>
+                      <span className={`badge ${r.status === "sent" ? "badge--ok" : "badge--err"}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
