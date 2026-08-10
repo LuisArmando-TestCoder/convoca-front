@@ -3,11 +3,11 @@
    accents, layered soft shadows, animated handles, and a polished two-column
    layout. Composes the global design tokens (light + dark aware). */
 
+/* Single-column WYSIWYG editor: stage + font + probe + bulk stack vertically. */
 .cert-editor {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  display: flex;
+  flex-direction: column;
   gap: 22px;
-  align-items: start;
 }
 
 /* ── Stage (image + draggable box) ─────────────────────────────────────── */
@@ -35,11 +35,20 @@
   box-shadow: var(--shadow);
 }
 
-.cert-stage img {
+.cert-stage-canvas {
   display: block;
   max-width: 100%;
   height: auto;
   background: var(--slate-050);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* The box overlay is a sibling of the canvas and uses percent positioning that
+   exactly matches the canvas' display box. It must stay ABOVE the composited
+   name (which lives inside the canvas itself), so its z-index must be greater. */
+.cert-box {
+  z-index: 2;
 }
 
 /* ── The draggable box overlay ────────────────────────────────────────────── */
@@ -115,11 +124,9 @@
   letter-spacing: 0.02em;
 }
 
-/* ── Side panel ────────────────────────────────────────────────────────────── */
-.cert-side {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+/* ── Stage meta (metrics + actions) below the canvas ───────────────────────── */
+.cert-stage-meta {
+  margin-top: 16px;
 }
 
 .cert-panel {
@@ -409,6 +416,51 @@
 }
 
 /* ── Bulk send panel ──────────────────────────────────────────────────────── */
+/* Filters sit BEFORE the list in a responsive grid. */
+.cert-bulk__filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr 120px auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+@media (max-width: 640px) {
+  .cert-bulk__filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cert-bulk__page-size input {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hovered row highlights so you can see whose name is previewed on the canvas. */
+.cert-bulk__row--hover {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+/* ── Pagination ───────────────────────────────────────────────────────────── */
+.cert-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.cert-pager__info {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--slate-600);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cert-pager__hover {
+  color: var(--brand);
+}
+
 .cert-bulk__list {
   margin-top: 12px;
   max-height: 260px;

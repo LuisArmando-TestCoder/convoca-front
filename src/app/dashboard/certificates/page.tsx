@@ -2,35 +2,32 @@
 
 // ── Certificate email tool ────────────────────────────────────────────────────
 // Drop a certificate image, draw the name box (or drag its two corner handles),
-// save it in memory, then send personalized PDFs by email — to a single
-// participant (test) or to a filtered/unfiltered set of participants.
-// All tool state persists in sessionStorage, so switching dashboard tabs never
-// loses your work.
+// and see the name rendered live inside the box ON the image (true WYSIWYG).
+// Send a personalized test probe to any custom name/email, or bulk-send PDFs to
+// participants of a selected event. The participant list is fetched per event
+// and the filtered results are paginated. All tool state persists in
+// sessionStorage, so switching dashboard tabs never loses your work. The box
+// overlay sits at a higher z-index than the composited name so it always stays
+// above the preview.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/components/Toast";
-import { useSession } from "@/components/session";
 import {
   boxMetrics,
   clientToImage,
+  fitTextInBox,
   normalizeBox,
   type Box,
 } from "@/lib/certificate";
-import { buildCertificatePdf, renderNameIntoImage } from "@/lib/certificatePdf";
+import { buildCertificatePdf } from "@/lib/certificatePdf";
 import { CERTIFICATE_FONTS, loadAllFonts, loadFullFont, type CertificateFont } from "@/lib/certificateFonts";
 import FontPicker from "@/components/FontPicker";
 import "./certificate.css";
 
-interface LookupResult {
-  name: string;
-  email: string;
-}
-
 interface ListRow {
   name: string;
   email: string;
-  eventName: string;
 }
 
 interface BulkFailure {
@@ -65,16 +62,19 @@ type DragMode = "draw" | "tl" | "br" | null;
 
 const CERT_KEY = "convoca_cert_state_v1";
 const MAX_IMAGE_DIM = 1800;
+const FIT_WEIGHT = 700;
+const FIT_COLOR = "#0b1220"; // ink — must match the PDF builder
 
 interface CertSnapshot {
   imageDataUrl: string | null;
   box: Box | null;
   saved: boolean;
   fontFamily: string | null;
-  email: string;
-  lookedUp: LookupResult | null;
+  probeName: string;
+  probeEmail: string;
   selected: string[];
   search: string;
+  pageSize: number;
 }
 
 /** Downscale an image to a JPEG data URL (keeps sessionStorage small). */
@@ -104,7 +104,6 @@ function fileToDataUrl(file: File, maxDim = MAX_IMAGE_DIM): Promise<string> {
 
 export default function CertificatesPage() {
   const toast = useToast();
-  const me = useSession();
 
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -113,14 +112,12 @@ export default function CertificatesPage() {
   const [saved, setSaved] = useState(false);
   const [dragging, setDragging] = useState<DragMode>(null);
   const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
-  // The box the preview is composited from. Only updated on mouse up, so the
-  // expensive canvas render never runs mid-drag (which would block the loop).
-  const [previewBox, setPreviewBox] = useState<Box | null>(null);
 
-  const [email, setEmail] = useState("");
-  const [lookedUp, setLookedUp] = useState<LookupResult | null>(null);
-  const [lookingUp, setLookingUp] = useState(false);
-  const [sending, setSending] = useState(false);
+  // Test probe: an ephemeral recipient that drives the preview + a single test
+  // send — no participant lookup required.
+  const [probeName, setProbeName] = useState("");
+  const [probeEmail, setProbeEmail] = useState("");
+  const [sendingProbe, setSendingProbe] = useState(false);
 
   const [font, setFont] = useState<CertificateFont>(CERTIFICATE_FONTS[0]);
   const [fontLoading, setFontLoading] = useState(false);
@@ -135,9 +132,15 @@ export default function CertificatesPage() {
   const [loadingParticipants, setLoadingParticipants] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [hovered, setHovered] = useState<ListRow | null>(null);
   const [sendingBulk, setSendingBulk] = useState(false);
   const [bulk, setBulk] = useState<BulkProgress | null>(null);
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([]);
+
+  // Pagination: the filtered list is paginated when it exceeds an editable
+  // amount (defaults to 50 rows per page).
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Send log: every send is recorded with the font, box positions, center,
   // dimensions, and the recipient name/email it was sent to.
@@ -184,10 +187,10 @@ export default function CertificatesPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const imgRef = useRef<HTMLImageElement>(null);
+  const stageCanvasRef = useRef<HTMLCanvasElement>(null);
   const anchorRef = useRef<{ x: number; y: number } | null>(null);
-  // Last pointer position in image coordinates, so the preview can be composited
-  // from the final box on mouse up (React state may not have flushed yet).
+  // Last pointer position in image coordinates, so the box can be finalized from
+  // the last pointermove when the pointer is released outside the window.
   const lastPtRef = useRef<{ x: number; y: number } | null>(null);
   const fontRef = useRef(font);
   useEffect(() => { fontRef.current = font; }, [font]);
@@ -206,7 +209,9 @@ export default function CertificatesPage() {
         setImageUrl(dataUrl);
         setBox(null);
         setSaved(false);
-        setLookedUp(null);
+        setProbeName("");
+        setProbeEmail("");
+        setHovered(null);
         setSelected(new Set());
         setSearch("");
         setBulk(null);
@@ -225,21 +230,21 @@ export default function CertificatesPage() {
     if (file) loadFile(file);
   }, [loadFile]);
 
-  // ── Coordinate math (image-pixel space via boundingClientRect) ─────────────
+  // ── Coordinate math (image-pixel space via the WYSIWYG canvas element) ─────
   const imageMetrics = () => {
-    const img = imgRef.current;
-    if (!img) return null;
-    const rect = img.getBoundingClientRect();
+    const canvas = stageCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
     return {
       displayWidth: rect.width,
       displayHeight: rect.height,
-      naturalWidth: img.naturalWidth,
-      naturalHeight: img.naturalHeight,
+      naturalWidth: canvas.width,
+      naturalHeight: canvas.height,
       rect,
     };
   };
 
-  // Start drawing a new box on the image (click + drag on the image itself).
+  // Start drawing a new box on the image (click + drag on the canvas itself).
   const onStagePointerDown = (e: React.PointerEvent) => {
     if (dragging) return;
     const m = imageMetrics();
@@ -264,8 +269,9 @@ export default function CertificatesPage() {
     setSaved(false);
   };
 
-  // Window-level move/up while dragging. This is robust regardless of pointer
-  // capture: the box updates live, and measuring stops on mouse up.
+  // Window-level move/up while dragging. The box updates live and the WYSIWYG
+  // redraws the name on every move, so the name visibly re-fits inside the box
+  // while you drag it.
   useEffect(() => {
     if (!dragging) return;
 
@@ -279,9 +285,6 @@ export default function CertificatesPage() {
     };
 
     const onUp = () => {
-      // Capture the anchor and last pointer position before clearing them, so
-      // the preview can be composited from the final box once the drag ends
-      // (never mid-drag).
       const anchor = anchorRef.current;
       const pt = lastPtRef.current;
       setDragging(null);
@@ -289,7 +292,7 @@ export default function CertificatesPage() {
       anchorRef.current = null;
       lastPtRef.current = null;
       if (anchor && pt) {
-        setPreviewBox(normalizeBox(pt, anchor));
+        setBox(normalizeBox(pt, anchor));
       }
     };
 
@@ -308,39 +311,13 @@ export default function CertificatesPage() {
       return;
     }
     setSaved(true);
-    setPreviewBox(box);
     toast.push("Name box saved for this session.", "ok");
-  };
-
-  // ── Participant lookup by email ────────────────────────────────────────────
-  // Searches the selected event's already-loaded participants client-side, so
-  // no extra request is needed and the lookup is always scoped to the event.
-  const lookup = async () => {
-    const needle = email.trim().toLowerCase();
-    if (!needle) {
-      toast.push("Enter a recipient email first.", "err");
-      return;
-    }
-    if (!participants) {
-      toast.push("Load the event's participants first.", "err");
-      return;
-    }
-    setLookingUp(true);
-    setLookedUp(null);
-    const hit = participants.find((p) => p.email.toLowerCase() === needle);
-    if (hit) {
-      setLookedUp({ name: hit.name, email: hit.email });
-      toast.push(`Found ${hit.name}.`, "ok");
-    } else {
-      toast.push("No participant with that email in this event.", "err");
-    }
-    setLookingUp(false);
   };
 
   // ── Font selection ─────────────────────────────────────────────────────────
   // The selected font must be loaded in FULL (all glyphs) so the participant's
-  // name renders correctly into the image. A text-restricted file would fall
-  // back to a system font for any glyph outside the label.
+  // name renders correctly into the canvas/PDF. A text-restricted file would
+  // fall back to a system font for any glyph outside the label.
   const selectFont = async (f: CertificateFont) => {
     setFont(f);
     setFontReady(false);
@@ -356,7 +333,7 @@ export default function CertificatesPage() {
     }
   };
 
-  // On mount: load the default font in FULL so the preview produces an image
+  // On mount: load the default font in FULL so the preview produces text
   // immediately, and lazy-load the rest (text-restricted) so each dropdown
   // option renders in its own font as it becomes ready.
   useEffect(() => {
@@ -393,10 +370,11 @@ export default function CertificatesPage() {
           setImageUrl(snap.imageDataUrl!);
           setBox(snap.box ?? null);
           setSaved(Boolean(snap.saved));
-          setEmail(snap.email ?? "");
-          setLookedUp(snap.lookedUp ?? null);
+          setProbeName(snap.probeName ?? "");
+          setProbeEmail(snap.probeEmail ?? "");
           setSelected(new Set(snap.selected ?? []));
           setSearch(snap.search ?? "");
+          if (snap.pageSize) setPageSize(snap.pageSize);
           if (snap.fontFamily) {
             const f = CERTIFICATE_FONTS.find((x) => x.family === snap.fontFamily);
             if (f) {
@@ -423,22 +401,23 @@ export default function CertificatesPage() {
       box,
       saved,
       fontFamily: font.family,
-      email,
-      lookedUp,
+      probeName,
+      probeEmail,
       selected: Array.from(selected),
       search,
+      pageSize,
     };
     try {
       sessionStorage.setItem(CERT_KEY, JSON.stringify(snap));
     } catch {
       // Quota exceeded — the image is probably too large; skip persisting.
     }
-  }, [imageUrl, box, saved, font, email, lookedUp, selected, search]);
+  }, [imageUrl, box, saved, font, probeName, probeEmail, selected, search, pageSize]);
 
   // ── Events + participant list (bulk) ───────────────────────────────────────
   // Load the org's events so the user can pick which event to emit certificates
   // for. Participants are then scoped to that event via the existing, deployed
-  // /api/events/:id/participants endpoint (no custom route needed).
+  // /api/events/:id/participants endpoint.
   const loadParticipantsForEvent = useCallback(async (eventId: string) => {
     setLoadingParticipants(true);
     try {
@@ -448,7 +427,6 @@ export default function CertificatesPage() {
       const rows: ListRow[] = res.participants.map((p) => ({
         name: p.name,
         email: p.email,
-        eventName: "",
       }));
       setParticipants(rows);
       toast.push(`${rows.length} participants loaded.`, "ok");
@@ -480,6 +458,7 @@ export default function CertificatesPage() {
     setSelectedEventId(eventId);
     setSelected(new Set());
     setSearch("");
+    setPage(1);
     await loadParticipantsForEvent(eventId);
   };
 
@@ -489,6 +468,7 @@ export default function CertificatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Filtering + pagination (filters live BEFORE the list) ──────────────────
   const filtered = useMemo(() => {
     if (!participants) return [];
     const q = search.trim().toLowerCase();
@@ -497,6 +477,17 @@ export default function CertificatesPage() {
       (p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
     );
   }, [participants, search]);
+
+  // Reset to page 1 whenever the filter inputs change.
+  useEffect(() => { setPage(1); }, [search, pageSize, selectedEventId, participants]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / Math.max(1, pageSize)));
+  const pageRows = useMemo(() => {
+    const size = Math.max(1, pageSize);
+    return filtered.slice((page - 1) * size, page * size);
+  }, [filtered, page, pageSize]);
+  const pageStart = filtered.length === 0 ? 0 : (page - 1) * Math.max(1, pageSize) + 1;
+  const pageEnd = Math.min(filtered.length, page * Math.max(1, pageSize));
 
   const toggleSelect = (email: string) => {
     setSelected((prev) => {
@@ -516,7 +507,6 @@ export default function CertificatesPage() {
   };
 
   // "No filter" select-all: selects every participant, ignoring the search box.
-  // This is the escape hatch when you want to send to the whole list at once.
   const selectAllNoFilter = () => {
     if (!participants) return;
     setSelected(new Set(participants.map((p) => p.email)));
@@ -524,20 +514,114 @@ export default function CertificatesPage() {
 
   const clearSelection = () => setSelected(new Set());
 
-  // ── Bulk send ──────────────────────────────────────────────────────────────
-  const sendBulk = async () => {
+  // ── WYSIWYG stage: composite the preview name into the box ON the canvas ───
+  // Preview priority: hovered participant > test probe name > sample.
+  const stagePreviewName = hovered?.name ?? (probeName.trim() || "Sample Name");
+
+  const redrawStage = useCallback(() => {
+    const canvas = stageCanvasRef.current;
+    if (!canvas || !image) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (canvas.width !== image.naturalWidth) canvas.width = image.naturalWidth;
+    if (canvas.height !== image.naturalHeight) canvas.height = image.naturalHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0);
+    if (box && fontReady && stagePreviewName.trim()) {
+      const family = `"${font.family}", serif`;
+      const fit = fitTextInBox(ctx, stagePreviewName.trim(), box, family, FIT_WEIGHT);
+      if (fit.fontSize > 0) {
+        ctx.font = `${FIT_WEIGHT} ${fit.fontSize}px ${family}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = FIT_COLOR;
+        ctx.fillText(stagePreviewName.trim(), fit.textX, fit.baselineY);
+      }
+    }
+  }, [image, box, fontReady, stagePreviewName, font]);
+
+  // Redraw live: on image load, on every box change (including during drag),
+  // on name change, and when the font finishes loading.
+  useEffect(() => { redrawStage(); }, [redrawStage]);
+
+  // ── Send helpers (shared by probe + bulk) ──────────────────────────────────
+  const requireReady = () => {
     if (!image || !box) {
       toast.push("Load an image and define the name box first.", "err");
-      return;
+      return false;
     }
     if (!saved) {
       toast.push("Save the name box first.", "err");
-      return;
+      return false;
     }
     if (!fontReady) {
       toast.push("Wait for the font to finish loading.", "err");
+      return false;
+    }
+    return true;
+  };
+
+  const sendOne = async (name: string, email: string) => {
+    const m = boxMetrics(box!);
+    try {
+      const pdfBase64 = await buildCertificatePdf(image!, name, box!, `"${font.family}", serif`);
+      await api("/api/certificates/send", {
+        method: "POST",
+        body: { to: email, name, pdfBase64 },
+      });
+      recordSend({
+        name,
+        email,
+        font: font.label,
+        box: box!,
+        centerX: m.centerX,
+        centerY: m.centerY,
+        maxWidth: m.maxWidth,
+        maxHeight: m.maxHeight,
+        status: "sent",
+      });
+      return { ok: true as const };
+    } catch (err) {
+      recordSend({
+        name,
+        email,
+        font: font.label,
+        box: box!,
+        centerX: m.centerX,
+        centerY: m.centerY,
+        maxWidth: m.maxWidth,
+        maxHeight: m.maxHeight,
+        status: "failed",
+      });
+      return { ok: false as const, reason: err instanceof Error ? err.message : "Send failed" };
+    }
+  };
+
+  // ── Send test probe (custom name + email, no lookup required) ──────────────
+  const sendProbe = async () => {
+    const name = probeName.trim();
+    const email = probeEmail.trim().toLowerCase();
+    if (!name || !email) {
+      toast.push("Enter a probe name and email first.", "err");
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.push("That email doesn't look right.", "err");
+      return;
+    }
+    if (!requireReady()) return;
+    setSendingProbe(true);
+    const res = await sendOne(name, email);
+    toast.push(
+      res.ok ? `Probe sent to ${email}.` : res.reason,
+      res.ok ? "ok" : "err",
+    );
+    setSendingProbe(false);
+  };
+
+  // ── Bulk send ──────────────────────────────────────────────────────────────
+  const sendBulk = async () => {
+    if (!requireReady()) return;
     const targets = participants?.filter((p) => selected.has(p.email)) ?? [];
     if (targets.length === 0) {
       toast.push("Select at least one participant.", "err");
@@ -552,38 +636,11 @@ export default function CertificatesPage() {
     for (let i = 0; i < targets.length; i++) {
       const p = targets[i];
       setBulk((b) => (b ? { ...b, current: p.name, done: i } : b));
-      const m = boxMetrics(box);
-      try {
-        const pdfBase64 = await buildCertificatePdf(image, p.name, box, `"${font.family}", serif`);
-        await api("/api/certificates/send", {
-          method: "POST",
-          body: { to: p.email, name: p.name, pdfBase64 },
-        });
-        recordSend({
-          name: p.name,
-          email: p.email,
-          font: font.label,
-          box,
-          centerX: m.centerX,
-          centerY: m.centerY,
-          maxWidth: m.maxWidth,
-          maxHeight: m.maxHeight,
-          status: "sent",
-        });
+      const res = await sendOne(p.name, p.email);
+      if (res.ok) {
         setBulk((b) => (b ? { ...b, sent: b.sent + 1, done: i + 1 } : b));
-      } catch (err) {
-        failures.push({ name: p.name, email: p.email, reason: err instanceof Error ? err.message : "Send failed" });
-        recordSend({
-          name: p.name,
-          email: p.email,
-          font: font.label,
-          box,
-          centerX: m.centerX,
-          centerY: m.centerY,
-          maxWidth: m.maxWidth,
-          maxHeight: m.maxHeight,
-          status: "failed",
-        });
+      } else {
+        failures.push({ name: p.name, email: p.email, reason: res.reason });
         setBulk((b) => (b ? { ...b, failed: b.failed + 1, done: i + 1 } : b));
       }
       // Gentle throttle between sends to respect Gmail's burst limits.
@@ -604,76 +661,7 @@ export default function CertificatesPage() {
     );
   };
 
-  // ── Send test (single) ─────────────────────────────────────────────────────
-  const sendTest = async () => {
-    if (!image || !box) {
-      toast.push("Load an image and define the name box first.", "err");
-      return;
-    }
-    if (!saved) {
-      toast.push("Save the name box first.", "err");
-      return;
-    }
-    if (!lookedUp) {
-      toast.push("Look up a participant by email first.", "err");
-      return;
-    }
-    if (!fontReady) {
-      toast.push("Wait for the font to finish loading.", "err");
-      return;
-    }
-    setSending(true);
-    const m = boxMetrics(box);
-    try {
-      const pdfBase64 = await buildCertificatePdf(image, lookedUp.name, box, `"${font.family}", serif`);
-      await api("/api/certificates/send", {
-        method: "POST",
-        body: {
-          to: lookedUp.email,
-          name: lookedUp.name,
-          pdfBase64,
-        },
-      });
-      recordSend({
-        name: lookedUp.name,
-        email: lookedUp.email,
-        font: font.label,
-        box,
-        centerX: m.centerX,
-        centerY: m.centerY,
-        maxWidth: m.maxWidth,
-        maxHeight: m.maxHeight,
-        status: "sent",
-      });
-      toast.push(`Certificate sent to ${lookedUp.email}.`, "ok");
-    } catch (err) {
-      recordSend({
-        name: lookedUp.name,
-        email: lookedUp.email,
-        font: font.label,
-        box,
-        centerX: m.centerX,
-        centerY: m.centerY,
-        maxWidth: m.maxWidth,
-        maxHeight: m.maxHeight,
-        status: "failed",
-      });
-      toast.push(err instanceof ApiError ? err.message : "Send failed.", "err");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  // ── Preview (name composited into the box) ─────────────────────────────────
-  // When no participant is looked up yet, render a sample name so the preview
-  // produces an image immediately once the box is drawn and the font is ready.
-  const previewName = lookedUp?.name ?? "Sample Name";
-  // The preview composites from `previewBox` (only updated on mouse up / save),
-  // never from `box` (which changes on every pointermove during a drag).
-  const previewUrl = usePreview(image, previewName, previewBox, fontReady ? `"${font.family}", serif` : null);
-
   const metrics = box ? boxMetrics(box) : null;
-  const selectedEventName = events?.find((e) => e.id === selectedEventId)?.name;
 
   // Cleanup object URL on unmount (only for blob: URLs — data URLs are no-ops).
   useEffect(() => () => { if (imageUrl?.startsWith("blob:")) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
@@ -684,7 +672,7 @@ export default function CertificatesPage() {
         <div>
           <h1>Certificates</h1>
           <p className="muted mt-8">
-            Drop a certificate image, draw the name box, then send personalized PDFs by email.
+            Drop a certificate image, draw the name box, preview the name live on the canvas, then send personalized PDFs by email.
           </p>
         </div>
       </div>
@@ -710,18 +698,10 @@ export default function CertificatesPage() {
         </div>
       ) : (
         <div className="cert-editor">
-          {/* Stage: image + draggable box */}
+          {/* Stage: WYSIWYG canvas (image + live composited name) + box overlay */}
           <div className="cert-stage-card">
-            <div
-              className="cert-stage"
-              onPointerDown={onStagePointerDown}
-            >
-              <img
-                ref={imgRef}
-                src={imageUrl!}
-                alt="Certificate"
-                draggable={false}
-              />
+            <div className="cert-stage" onPointerDown={onStagePointerDown}>
+              <canvas ref={stageCanvasRef} className="cert-stage-canvas" />
               {box && (
                 <div
                   className="cert-box"
@@ -750,112 +730,118 @@ export default function CertificatesPage() {
               )}
             </div>
 
-            <div className="row gap-8 mt-16 wrap">
-              <button className="btn btn--primary" onClick={saveBox} disabled={!box}>
-                {saved ? "✓ Box saved" : "Save box"}
-              </button>
-              <button
-                className="btn btn--ghost"
-                onClick={() => {
-                  setImage(null);
-                  setImageUrl(null);
-                  setBox(null);
-                  setSaved(false);
-                  setLookedUp(null);
-                  setSelected(new Set());
-                  setSearch("");
-                  setBulk(null);
-                  setBulkFailures([]);
-                }}
-              >
-                Change image
-              </button>
+            <div className="cert-stage-meta">
+              {metrics ? (
+                <div className="cert-metrics">
+                  <div className="cert-metric">
+                    <div className="cert-metric__label">Top-left</div>
+                    <div className="cert-metric__value">({Math.round(box!.x1)}, {Math.round(box!.y1)})</div>
+                  </div>
+                  <div className="cert-metric">
+                    <div className="cert-metric__label">Bottom-right</div>
+                    <div className="cert-metric__value">({Math.round(box!.x2)}, {Math.round(box!.y2)})</div>
+                  </div>
+                  <div className="cert-metric">
+                    <div className="cert-metric__label">Center</div>
+                    <div className="cert-metric__value">({Math.round(metrics.centerX)}, {Math.round(metrics.centerY)})</div>
+                  </div>
+                  <div className="cert-metric">
+                    <div className="cert-metric__label">Max W × H</div>
+                    <div className="cert-metric__value">{Math.round(metrics.maxWidth)} × {Math.round(metrics.maxHeight)}</div>
+                  </div>
+                </div>
+              ) : (
+                <p className="muted small">Click and drag on the canvas to draw the name box.</p>
+              )}
+
+              <div className="row gap-8 mt-16 wrap">
+                <button className="btn btn--primary" onClick={saveBox} disabled={!box || saved}>
+                  {saved ? "✓ Box saved" : "Save box"}
+                </button>
+                <button
+                  className="btn btn--ghost"
+                  onClick={() => {
+                    setImage(null);
+                    setImageUrl(null);
+                    setBox(null);
+                    setSaved(false);
+                    setProbeName("");
+                    setProbeEmail("");
+                    setHovered(null);
+                    setSelected(new Set());
+                    setSearch("");
+                    setBulk(null);
+                    setBulkFailures([]);
+                  }}
+                >
+                  Change image
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Side panel: metrics + lookup + bulk + send */}
-          <div className="cert-side">
-            <div className="cert-panel">
-              <div className="cert-panel__title">Name box</div>
-              {metrics ? (
-                <>
-                  <div className="cert-metrics mt-8">
-                    <div className="cert-metric">
-                      <div className="cert-metric__label">Top-left</div>
-                      <div className="cert-metric__value">({Math.round(box!.x1)}, {Math.round(box!.y1)})</div>
-                    </div>
-                    <div className="cert-metric">
-                      <div className="cert-metric__label">Bottom-right</div>
-                      <div className="cert-metric__value">({Math.round(box!.x2)}, {Math.round(box!.y2)})</div>
-                    </div>
-                    <div className="cert-metric">
-                      <div className="cert-metric__label">Center</div>
-                      <div className="cert-metric__value">({Math.round(metrics.centerX)}, {Math.round(metrics.centerY)})</div>
-                    </div>
-                    <div className="cert-metric">
-                      <div className="cert-metric__label">Max W × H</div>
-                      <div className="cert-metric__value">{Math.round(metrics.maxWidth)} × {Math.round(metrics.maxHeight)}</div>
-                    </div>
-                  </div>
-                  {saved && (
-                    <div className="cert-saved mt-8">
-                      <span className="badge badge--ok">✓ Saved for this session</span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="muted small mt-8">Click and drag on the image to draw the name box.</p>
-              )}
-            </div>
-
-            <div className="cert-panel">
-              <div className="cert-panel__title">Font</div>
-              <div className="field mt-8">
-                <label htmlFor="cert-font">Name font</label>
-                <FontPicker
-                  value={font}
-                  readyFonts={readyFonts}
-                  loading={fontLoading}
-                  onChange={selectFont}
-                />
-                <span className="hint">
-                  {fontLoading ? "Loading font…" : fontReady ? `Using ${font.label}` : "Select a font"}
-                </span>
-              </div>
-            </div>
-
-            <div className="cert-panel">
-              <div className="cert-panel__title">Recipient</div>
-              <div className="field mt-8">
-                <label htmlFor="cert-email">Participant email</label>
-                <input
-                  id="cert-email"
-                  className="input"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => { setEmail(e.target.value); setLookedUp(null); }}
-                />
-              </div>
-              <button className="btn btn--ghost btn--block" onClick={lookup} disabled={lookingUp}>
-                {lookingUp ? <span className="spinner spinner--dark" /> : "Look up name"}
-              </button>
+          {/* Font */}
+          <div className="cert-panel">
+            <div className="cert-panel__title">Font</div>
+            <div className="field mt-8">
+              <label htmlFor="cert-font">Name font</label>
+              <FontPicker
+                value={font}
+                readyFonts={readyFonts}
+                loading={fontLoading}
+                onChange={selectFont}
+              />
               <span className="hint">
-                {selectedEventName
-                  ? `Searches participants in ${selectedEventName}`
-                  : "Select an event to search its participants"}
+                {fontLoading ? "Loading font…" : fontReady ? `Using ${font.label}` : "Select a font"}
               </span>
-              {lookedUp && (
-                <div className="cert-found mt-8">
-                  <div className="cert-found__name">{lookedUp.name}</div>
-                  <div className="cert-found__email">{lookedUp.email}</div>
-                </div>
-              )}
             </div>
+          </div>
 
-            <div className="cert-panel">
-              <div className="cert-panel__title">Bulk send</div>
-              <div className="field mt-8">
+          {/* Test probe: custom name + email, previewed live on the canvas */}
+          <div className="cert-panel">
+            <div className="cert-panel__title">Test probe</div>
+            <p className="muted small mt-8">
+              Type any name and email below. The name appears live inside the box on
+              the canvas, and the probe email sends one test certificate to it.
+            </p>
+            <div className="field mt-8">
+              <label htmlFor="cert-probe-name">Name</label>
+              <input
+                id="cert-probe-name"
+                className="input"
+                type="text"
+                placeholder="e.g. Anastasia Reyes"
+                value={probeName}
+                onChange={(e) => { setProbeName(e.target.value); setHovered(null); }}
+              />
+            </div>
+            <div className="field mt-8">
+              <label htmlFor="cert-probe-email">Email</label>
+              <input
+                id="cert-probe-email"
+                className="input"
+                type="email"
+                placeholder="name@example.com"
+                value={probeEmail}
+                onChange={(e) => setProbeEmail(e.target.value)}
+              />
+            </div>
+            <button
+              className="btn btn--primary btn--block cert-send mt-8"
+              onClick={sendProbe}
+              disabled={sendingProbe || !probeName.trim() || !probeEmail.trim() || !box || !saved || !fontReady}
+            >
+              {sendingProbe ? <span className="spinner" /> : "Send probe email"}
+            </button>
+          </div>
+
+          {/* Bulk send: event-scoped, filters on top, paginated list */}
+          <div className="cert-panel">
+            <div className="cert-panel__title">Bulk send</div>
+
+            {/* Filters BEFORE the list */}
+            <div className="cert-bulk__filters">
+              <div className="field">
                 <label htmlFor="cert-event">Event</label>
                 <select
                   id="cert-event"
@@ -871,8 +857,8 @@ export default function CertificatesPage() {
                   ))}
                 </select>
               </div>
-              <div className="field mt-8">
-                <label htmlFor="cert-filter">Filter participants</label>
+              <div className="field">
+                <label htmlFor="cert-filter">Filter</label>
                 <input
                   id="cert-filter"
                   className="input"
@@ -882,196 +868,196 @@ export default function CertificatesPage() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
+              <div className="field cert-bulk__page-size">
+                <label htmlFor="cert-page-size">Rows per page</label>
+                <input
+                  id="cert-page-size"
+                  className="input"
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Math.max(5, Number(e.target.value) || 50))}
+                />
+              </div>
               <button
-                className="btn btn--ghost btn--block"
+                className="btn btn--ghost"
                 onClick={loadEvents}
                 disabled={loadingParticipants}
               >
-                {loadingParticipants ? <span className="spinner spinner--dark" /> : participants ? "Refresh list" : "Load participants"}
+                {loadingParticipants ? <span className="spinner spinner--dark" /> : "Refresh"}
               </button>
-
-              {participants && (
-                <>
-                  <div className="cert-bulk__list">
-                    {filtered.slice(0, 300).map((p) => (
-                      <label key={p.email} className="cert-bulk__row">
-                        <input
-                          type="checkbox"
-                          className="cert-bulk__check"
-                          checked={selected.has(p.email)}
-                          onChange={() => toggleSelect(p.email)}
-                        />
-                        <span className="cert-bulk__name">{p.name}</span>
-                        <span className="cert-bulk__email">{p.email}</span>
-                      </label>
-                    ))}
-                    {filtered.length === 0 && (
-                      <p className="muted small" style={{ padding: "10px 4px" }}>No participants match.</p>
-                    )}
-                    {filtered.length > 300 && (
-                      <p className="muted small" style={{ padding: "10px 4px" }}>
-                        Showing first 300 of {filtered.length}. Refine your filter to narrow down.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="cert-bulk__actions">
-                    <button className="btn btn--ghost btn--sm" onClick={selectAllFiltered}>
-                      Select all ({filtered.length})
-                    </button>
-                    <button
-                      className="btn btn--ghost btn--sm"
-                      onClick={selectAllNoFilter}
-                      disabled={!participants || participants.length === 0}
-                    >
-                      Select all (no filter)
-                    </button>
-                    <button className="btn btn--ghost btn--sm" onClick={clearSelection}>
-                      Clear
-                    </button>
-                    <span className="cert-bulk__count">{selected.size} selected</span>
-                  </div>
-
-                  <button
-                    className="btn btn--primary btn--block cert-send"
-                    onClick={sendBulk}
-                    disabled={sendingBulk || selected.size === 0 || !box || !saved || !fontReady}
-                  >
-                    {sendingBulk
-                      ? <span className="spinner" />
-                      : `Send ${selected.size} certificate${selected.size === 1 ? "" : "s"}`}
-                  </button>
-
-                  {bulk && (
-                    <div className="cert-bulk__progress">
-                      <div className="cert-bulk__bar">
-                        <div
-                          className="cert-bulk__bar-fill"
-                          style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }}
-                        />
-                      </div>
-                      <div className="cert-bulk__meta">
-                        {bulk.done} / {bulk.total} · {bulk.sent} sent · {bulk.failed} failed
-                        {bulk.current && <span className="cert-bulk__current"> · {bulk.current}</span>}
-                      </div>
-                    </div>
-                  )}
-
-                  {bulkFailures.length > 0 && (
-                    <div className="cert-bulk__failures">
-                      {bulkFailures.map((f) => (
-                        <div key={f.email} className="cert-bulk__failure">
-                          <strong>{f.name}</strong> — {f.reason}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
             </div>
 
-            {previewUrl && (
-              <div className="cert-panel">
-                <div className="cert-panel__title">Preview</div>
-                <div className="cert-preview mt-8">
-                  <img src={previewUrl} alt="Certificate preview" />
+            {participants && (
+              <>
+                {/* Selection controls: also before the list */}
+                <div className="cert-bulk__actions">
+                  <button className="btn btn--ghost btn--sm" onClick={selectAllFiltered}>
+                    Select all ({filtered.length})
+                  </button>
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    onClick={selectAllNoFilter}
+                    disabled={!participants || participants.length === 0}
+                  >
+                    Select all (no filter)
+                  </button>
+                  <button className="btn btn--ghost btn--sm" onClick={clearSelection}>
+                    Clear
+                  </button>
+                  <span className="cert-bulk__count">{selected.size} selected</span>
                 </div>
+
+                {/* Paginated list: hovering a row previews its name on the canvas */}
+                <div className="cert-bulk__list" onMouseLeave={() => setHovered(null)}>
+                  {pageRows.map((p) => (
+                    <label
+                      key={p.email}
+                      className={`cert-bulk__row ${hovered?.email === p.email ? "cert-bulk__row--hover" : ""}`}
+                      onMouseEnter={() => setHovered(p)}
+                    >
+                      <input
+                        type="checkbox"
+                        className="cert-bulk__check"
+                        checked={selected.has(p.email)}
+                        onChange={() => toggleSelect(p.email)}
+                      />
+                      <span className="cert-bulk__name">{p.name}</span>
+                      <span className="cert-bulk__email">{p.email}</span>
+                    </label>
+                  ))}
+                  {pageRows.length === 0 && (
+                    <p className="muted small" style={{ padding: "10px 4px" }}>No participants match.</p>
+                  )}
+                </div>
+
+                {/* Pagination */}
+                {filtered.length > Math.max(1, pageSize) && (
+                  <div className="cert-pager">
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page <= 1}
+                    >
+                      Prev
+                    </button>
+                    <span className="cert-pager__info">
+                      {pageStart}-{pageEnd} of {filtered.length}
+                      {hovered && <span className="cert-pager__hover"> · {hovered.name}</span>}
+                    </span>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  className="btn btn--primary btn--block cert-send mt-8"
+                  onClick={sendBulk}
+                  disabled={sendingBulk || selected.size === 0 || !box || !saved || !fontReady}
+                >
+                  {sendingBulk
+                    ? <span className="spinner" />
+                    : `Send ${selected.size} certificate${selected.size === 1 ? "" : "s"}`}
+                </button>
+
+                {bulk && (
+                  <div className="cert-bulk__progress">
+                    <div className="cert-bulk__bar">
+                      <div
+                        className="cert-bulk__bar-fill"
+                        style={{ width: `${bulk.total ? (bulk.done / bulk.total) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <div className="cert-bulk__meta">
+                      {bulk.done} / {bulk.total} · {bulk.sent} sent · {bulk.failed} failed
+                      {bulk.current && <span className="cert-bulk__current"> · {bulk.current}</span>}
+                    </div>
+                  </div>
+                )}
+
+                {bulkFailures.length > 0 && (
+                  <div className="cert-bulk__failures">
+                    {bulkFailures.map((f) => (
+                      <div key={f.email} className="cert-bulk__failure">
+                        <strong>{f.name}</strong> — {f.reason}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Send log */}
+          <div className="cert-log">
+            <div className="cert-log__head">
+              <div>
+                <h2>Send log</h2>
+                <p className="muted small">
+                  {sendLog.length} send{sendLog.length === 1 ? "" : "s"} recorded · font, box, center, dimensions, recipient
+                </p>
+              </div>
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={() => setLogOpen((o) => !o)}
+                disabled={sendLog.length === 0}
+              >
+                {logOpen ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            {logOpen && sendLog.length > 0 && (
+              <div className="cert-log__table-wrap">
+                <table className="cert-log__table">
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>Recipient</th>
+                      <th>Font</th>
+                      <th>Box (x1,y1 → x2,y2)</th>
+                      <th>Center</th>
+                      <th>Max W × H</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sendLog.map((r) => (
+                      <tr key={r.id}>
+                        <td className="cert-log__mono">{new Date(r.at).toLocaleString()}</td>
+                        <td>
+                          <div className="cert-log__name">{r.name}</div>
+                          <div className="cert-log__email">{r.email}</div>
+                        </td>
+                        <td>{r.font}</td>
+                        <td className="cert-log__mono">
+                          ({Math.round(r.box.x1)}, {Math.round(r.box.y1)}) → ({Math.round(r.box.x2)}, {Math.round(r.box.y2)})
+                        </td>
+                        <td className="cert-log__mono">
+                          ({Math.round(r.centerX)}, {Math.round(r.centerY)})
+                        </td>
+                        <td className="cert-log__mono">
+                          {Math.round(r.maxWidth)} × {Math.round(r.maxHeight)}
+                        </td>
+                        <td>
+                          <span className={`badge ${r.status === "sent" ? "badge--ok" : "badge--err"}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-
-            <button
-              className="btn btn--primary btn--block cert-send"
-              onClick={sendTest}
-              disabled={sending || !lookedUp || !box || !saved || !fontReady}
-            >
-              {sending ? <span className="spinner" /> : "Send test email"}
-            </button>
           </div>
         </div>
       )}
-
-      {/* Send log: every send recorded with font, box positions, center,
-          dimensions, and the recipient name/email it was sent to. */}
-      <div className="cert-log">
-        <div className="cert-log__head">
-          <div>
-            <h2>Send log</h2>
-            <p className="muted small">
-              {sendLog.length} send{sendLog.length === 1 ? "" : "s"} recorded · font, box, center, dimensions, recipient
-            </p>
-          </div>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => setLogOpen((o) => !o)}
-            disabled={sendLog.length === 0}
-          >
-            {logOpen ? "Hide" : "Show"}
-          </button>
-        </div>
-
-        {logOpen && sendLog.length > 0 && (
-          <div className="cert-log__table-wrap">
-            <table className="cert-log__table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Recipient</th>
-                  <th>Font</th>
-                  <th>Box (x1,y1 → x2,y2)</th>
-                  <th>Center</th>
-                  <th>Max W × H</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sendLog.map((r) => (
-                  <tr key={r.id}>
-                    <td className="cert-log__mono">{new Date(r.at).toLocaleString()}</td>
-                    <td>
-                      <div className="cert-log__name">{r.name}</div>
-                      <div className="cert-log__email">{r.email}</div>
-                    </td>
-                    <td>{r.font}</td>
-                    <td className="cert-log__mono">
-                      ({Math.round(r.box.x1)}, {Math.round(r.box.y1)}) → ({Math.round(r.box.x2)}, {Math.round(r.box.y2)})
-                    </td>
-                    <td className="cert-log__mono">
-                      ({Math.round(r.centerX)}, {Math.round(r.centerY)})
-                    </td>
-                    <td className="cert-log__mono">
-                      {Math.round(r.maxWidth)} × {Math.round(r.maxHeight)}
-                    </td>
-                    <td>
-                      <span className={`badge ${r.status === "sent" ? "badge--ok" : "badge--err"}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
-}
-
-/** Memoized preview: composite the looked-up name into the box. */
-function usePreview(
-  image: HTMLImageElement | null,
-  name: string,
-  box: Box | null,
-  fontFamily: string | null,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!image || !box || !name || !fontFamily) {
-      setUrl(null);
-      return;
-    }
-    const dataUrl = renderNameIntoImage(image, name, box, fontFamily);
-    setUrl(dataUrl);
-  }, [image, name, box, fontFamily]);
-  return url;
 }

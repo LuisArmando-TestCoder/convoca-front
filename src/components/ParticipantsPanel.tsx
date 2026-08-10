@@ -490,7 +490,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
                   {fields.map((f) => <td key={f.key}>{pv(p, f.key)}</td>)}
                   <td>
                     {p.registered
-                      ? <span className="badge badge--ok">✓ Checked in</span>
+                      ? <span className="badge badge--ok">Checked</span>
                       : <span className="badge badge--pending">Pending</span>}
                   </td>
                   <td>
