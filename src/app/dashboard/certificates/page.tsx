@@ -26,6 +26,7 @@ import FontPicker from "@/components/FontPicker";
 import "./certificate.css";
 
 interface ListRow {
+  hash: string;
   name: string;
   email: string;
   registered: boolean;
@@ -75,7 +76,7 @@ interface SendRecord {
 
 type DragMode = "draw" | "tl" | "br" | null;
 
-const CERT_KEY = "convoca_cert_state_v1";
+const CERT_KEY = "convoca_cert_state_v2";
 const MAX_IMAGE_DIM = 1800;
 const FIT_WEIGHT = 700;
 const FIT_COLOR = "#0b1220"; // ink — must match the PDF builder
@@ -468,6 +469,7 @@ export default function CertificatesPage() {
         `/api/events/${eventId}/participants`,
       );
       const rows: ListRow[] = res.participants.map((p) => ({
+        hash: p.hash,
         name: p.name,
         email: p.email,
         registered: Boolean(p.registered),
@@ -562,11 +564,15 @@ export default function CertificatesPage() {
   const pageStart = filtered.length === 0 ? 0 : (page - 1) * Math.max(1, pageSize) + 1;
   const pageEnd = Math.min(filtered.length, page * Math.max(1, pageSize));
 
-  const toggleSelect = (email: string) => {
+  // Selection is keyed by participant identity (hash = name + email), NOT email.
+  // The same email can cover several people (different names), so an email-keyed
+  // set would silently pull in every matching row when sending, including
+  // pending participants the admin never picked.
+  const toggleSelect = (hash: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(email)) next.delete(email);
-      else next.add(email);
+      if (next.has(hash)) next.delete(hash);
+      else next.add(hash);
       return next;
     });
   };
@@ -574,7 +580,7 @@ export default function CertificatesPage() {
   const selectAllFiltered = () => {
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const p of filtered) next.add(p.email);
+      for (const p of filtered) next.add(p.hash);
       return next;
     });
   };
@@ -582,7 +588,7 @@ export default function CertificatesPage() {
   // "No filter" select-all: selects every participant, ignoring the search box.
   const selectAllNoFilter = () => {
     if (!participants) return;
-    setSelected(new Set(participants.map((p) => p.email)));
+    setSelected(new Set(participants.map((p) => p.hash)));
   };
 
   const clearSelection = () => setSelected(new Set());
@@ -591,31 +597,49 @@ export default function CertificatesPage() {
   // Preview priority: hovered participant > test probe name > sample.
   const stagePreviewName = hovered?.name ?? (probeName.trim() || "Sample Name");
 
-  const redrawStage = useCallback(() => {
-    const canvas = stageCanvasRef.current;
-    if (!canvas || !image) return;
+  // Composite a name into the box on an arbitrary canvas. Shared by the stage
+  // canvas and the floating, unselectable preview so both stay pixel-identical.
+  const drawNameIntoCanvas = useCallback((canvas: HTMLCanvasElement, name: string) => {
+    if (!image) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     if (canvas.width !== image.naturalWidth) canvas.width = image.naturalWidth;
     if (canvas.height !== image.naturalHeight) canvas.height = image.naturalHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0);
-    if (box && fontReady && stagePreviewName.trim()) {
+    if (box && fontReady && name.trim()) {
       const family = `"${font.family}", serif`;
-      const fit = fitTextInBox(ctx, stagePreviewName.trim(), box, family, FIT_WEIGHT);
+      const fit = fitTextInBox(ctx, name.trim(), box, family, FIT_WEIGHT);
       if (fit.fontSize > 0) {
         ctx.font = `${FIT_WEIGHT} ${fit.fontSize}px ${family}`;
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
         ctx.fillStyle = FIT_COLOR;
-        ctx.fillText(stagePreviewName.trim(), fit.textX, fit.baselineY);
+        ctx.fillText(name.trim(), fit.textX, fit.baselineY);
       }
     }
-  }, [image, box, fontReady, stagePreviewName, font]);
+  }, [image, box, fontReady, font]);
+
+  const redrawStage = useCallback(() => {
+    const canvas = stageCanvasRef.current;
+    if (!canvas) return;
+    drawNameIntoCanvas(canvas, stagePreviewName);
+  }, [drawNameIntoCanvas, stagePreviewName]);
 
   // Redraw live: on image load, on every box change (including during drag),
   // on name change, and when the font finishes loading.
   useEffect(() => { redrawStage(); }, [redrawStage]);
+
+  // Floating, unselectable preview: appears while hovering a participant row
+  // (or when a probe name is typed) and shows the image with that name. It is
+  // pointer-events-none + user-select-none so it never intercepts clicks or
+  // text selection on the list underneath.
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewName = hovered?.name ?? (probeName.trim() || null);
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    if (canvas && previewName) drawNameIntoCanvas(canvas, previewName);
+  }, [drawNameIntoCanvas, previewName]);
 
   // ── Send helpers (shared by probe + bulk) ──────────────────────────────────
   const requireReady = () => {
@@ -695,7 +719,7 @@ export default function CertificatesPage() {
   // ── Bulk send ──────────────────────────────────────────────────────────────
   const sendBulk = async () => {
     if (!requireReady()) return;
-    const targets = participants?.filter((p) => selected.has(p.email)) ?? [];
+    const targets = participants?.filter((p) => selected.has(p.hash)) ?? [];
     if (targets.length === 0) {
       toast.push("Select at least one participant.", "err");
       return;
@@ -1046,15 +1070,15 @@ export default function CertificatesPage() {
                 <div className="cert-bulk__list" onMouseLeave={() => setHovered(null)}>
                   {pageRows.map((p) => (
                     <label
-                      key={p.email}
-                      className={`cert-bulk__row ${hovered?.email === p.email ? "cert-bulk__row--hover" : ""}`}
+                      key={p.hash}
+                      className={`cert-bulk__row ${hovered?.hash === p.hash ? "cert-bulk__row--hover" : ""}`}
                       onMouseEnter={() => setHovered(p)}
                     >
                       <input
                         type="checkbox"
                         className="cert-bulk__check"
-                        checked={selected.has(p.email)}
-                        onChange={() => toggleSelect(p.email)}
+                        checked={selected.has(p.hash)}
+                        onChange={() => toggleSelect(p.hash)}
                       />
                       <span className="cert-bulk__name">{p.name}</span>
                       <span className="cert-bulk__email">{p.email}</span>
@@ -1123,8 +1147,8 @@ export default function CertificatesPage() {
 
                 {bulkFailures.length > 0 && (
                   <div className="cert-bulk__failures">
-                    {bulkFailures.map((f) => (
-                      <div key={f.email} className="cert-bulk__failure">
+                    {bulkFailures.map((f, i) => (
+                      <div key={`${f.name}-${f.email}-${i}`} className="cert-bulk__failure">
                         <strong>{f.name}</strong> — {f.reason}
                       </div>
                     ))}
@@ -1196,6 +1220,14 @@ export default function CertificatesPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Floating unselectable preview: the image with the hovered name */}
+      {image && box && fontReady && previewName && (
+        <div className="cert-preview-pop" aria-hidden="true">
+          <div className="cert-preview-pop__label">{previewName}</div>
+          <canvas ref={previewCanvasRef} className="cert-preview-pop__canvas" />
         </div>
       )}
     </div>

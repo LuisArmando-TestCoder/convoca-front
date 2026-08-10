@@ -711,6 +711,51 @@
   text-transform: capitalize;
 }
 
+/* ── Floating unselectable preview ───────────────────────────────────────── */
+/* Appears while hovering a participant row (or typing a probe name). It is
+   purely informational: pointer-events:none + user-select:none so it never
+   intercepts clicks or text selection on the list underneath. Positioned at a
+   fixed corner so it stays in view while scrolling the participant list. */
+.cert-preview-pop {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  width: 240px;
+  max-height: 42vh;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: color-mix(in srgb, var(--white) 92%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius);
+  box-shadow:
+    0 24px 60px -12px rgba(11, 18, 32, 0.3),
+    0 0 0 1px color-mix(in srgb, var(--brand) 8%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  animation: certPop 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: bottom right;
+}
+.cert-preview-pop__label {
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  color: var(--brand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+.cert-preview-pop__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .cert-editor { grid-template-columns: 1fr; }
