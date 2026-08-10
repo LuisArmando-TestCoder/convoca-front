@@ -189,7 +189,7 @@ h3 { font-size: 1rem; font-weight: 700; }
 .btn--block { width: 100%; }
 
 /* ── Forms ──────────────────────────────────────────────────────────────────── */
-.field { display: flex; flex-direction: column; gap: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
 .field > label { font-weight: 650; font-size: 0.85rem; color: var(--slate-700); letter-spacing: -0.01em; }
 .input, .textarea, .select {
   font: inherit; color: var(--ink);
