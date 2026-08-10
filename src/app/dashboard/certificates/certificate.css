@@ -434,6 +434,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Filter actions row (Reset + Refresh) — aligns to the bottom of the filters */
+.cert-bulk__filter-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Status badges on each participant row (check-in + source + QR) */
+.cert-bulk__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  flex: 0 0 auto;
+}
+
+.cert-bulk__row .cert-bulk__status .badge {
+  font-size: 0.68rem;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
 /* Hovered row highlights so you can see whose name is previewed on the canvas. */
 .cert-bulk__row--hover {
   background: color-mix(in srgb, var(--brand) 16%, transparent);

@@ -28,6 +28,21 @@ import "./certificate.css";
 interface ListRow {
   name: string;
   email: string;
+  registered: boolean;
+  source: string;
+  qrSentAt: string | null;
+  fields?: Record<string, string>;
+  country?: string;
+  phone?: string;
+}
+
+type CheckFilter = "any" | "in" | "pending";
+type SourceFilter = "any" | "manual" | "csv" | "self";
+type QrFilter = "any" | "sent" | "unsent";
+
+/** Reads a participant's value for a field key (custom map, or legacy column). */
+function pv(p: ListRow, key: string): string {
+  return p.fields?.[key] ?? (key === "country" ? p.country : key === "phone" ? p.phone : undefined) ?? "";
 }
 
 interface BulkFailure {
@@ -141,6 +156,27 @@ export default function CertificatesPage() {
   // amount (defaults to 50 rows per page).
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+
+  // Filters: check-in status, source, QR sent, and every custom field the
+  // selected event defines (plus legacy country/phone columns).
+  const [eventFields, setEventFields] = useState<{ key: string; label: string }[]>([]);
+  const [checkFilter, setCheckFilter] = useState<CheckFilter>("any");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("any");
+  const [qrFilter, setQrFilter] = useState<QrFilter>("any");
+  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({});
+
+  const activeFilters =
+    (checkFilter !== "any" ? 1 : 0) +
+    (sourceFilter !== "any" ? 1 : 0) +
+    (qrFilter !== "any" ? 1 : 0) +
+    Object.values(fieldFilters).filter((v) => v.trim()).length;
+
+  const resetFilters = () => {
+    setCheckFilter("any");
+    setSourceFilter("any");
+    setQrFilter("any");
+    setFieldFilters({});
+  };
 
   // Send log: every send is recorded with the font, box positions, center,
   // dimensions, and the recipient name/email it was sent to.
@@ -421,12 +457,25 @@ export default function CertificatesPage() {
   const loadParticipantsForEvent = useCallback(async (eventId: string) => {
     setLoadingParticipants(true);
     try {
-      const res = await api<{ participants: { name: string; email: string }[] }>(
+      // Fetch the event's field schema so the filter bar can offer every custom
+      // field the participants for this event carry (plus legacy columns).
+      const ev = await api<{ event: { fields?: { key: string; label: string }[] } }>(
+        `/api/events/${eventId}`,
+      );
+      setEventFields(ev.event.fields ?? []);
+
+      const res = await api<{ participants: ListRow[] }>(
         `/api/events/${eventId}/participants`,
       );
       const rows: ListRow[] = res.participants.map((p) => ({
         name: p.name,
         email: p.email,
+        registered: Boolean(p.registered),
+        source: p.source ?? "",
+        qrSentAt: p.qrSentAt ?? null,
+        fields: p.fields ?? {},
+        country: p.country,
+        phone: p.phone,
       }));
       setParticipants(rows);
       toast.push(`${rows.length} participants loaded.`, "ok");
@@ -472,11 +521,35 @@ export default function CertificatesPage() {
   const filtered = useMemo(() => {
     if (!participants) return [];
     const q = search.trim().toLowerCase();
-    if (!q) return participants;
-    return participants.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
-    );
-  }, [participants, search]);
+    return participants.filter((p) => {
+      // Free-text search across name, email, and every field value.
+      if (q) {
+        const haystack = [
+          p.name,
+          p.email,
+          p.source,
+          p.country ?? "",
+          p.phone ?? "",
+          ...eventFields.map((f) => pv(p, f.key)),
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      // Check-in status.
+      if (checkFilter === "in" && !p.registered) return false;
+      if (checkFilter === "pending" && p.registered) return false;
+      // Source.
+      if (sourceFilter !== "any" && p.source !== sourceFilter) return false;
+      // QR sent.
+      if (qrFilter === "sent" && !p.qrSentAt) return false;
+      if (qrFilter === "unsent" && p.qrSentAt) return false;
+      // Custom field filters (substring match on each active field).
+      for (const [key, val] of Object.entries(fieldFilters)) {
+        const needle = val.trim().toLowerCase();
+        if (needle && !pv(p, key).toLowerCase().includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [participants, search, eventFields, checkFilter, sourceFilter, qrFilter, fieldFilters]);
 
   // Reset to page 1 whenever the filter inputs change.
   useEffect(() => { setPage(1); }, [search, pageSize, selectedEventId, participants]);
@@ -863,11 +936,64 @@ export default function CertificatesPage() {
                   id="cert-filter"
                   className="input"
                   type="text"
-                  placeholder="Search name or email…"
+                  placeholder="Search name, email, or any field…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
+              <div className="field">
+                <label htmlFor="cert-check">Check-in</label>
+                <select
+                  id="cert-check"
+                  className="select"
+                  value={checkFilter}
+                  onChange={(e) => setCheckFilter(e.target.value as CheckFilter)}
+                >
+                  <option value="any">Any</option>
+                  <option value="in">Checked in</option>
+                  <option value="pending">Not checked in</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="cert-source">Source</label>
+                <select
+                  id="cert-source"
+                  className="select"
+                  value={sourceFilter}
+                  onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+                >
+                  <option value="any">Any</option>
+                  <option value="manual">Manual</option>
+                  <option value="csv">Imported</option>
+                  <option value="self">Self-registered</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="cert-qr">QR</label>
+                <select
+                  id="cert-qr"
+                  className="select"
+                  value={qrFilter}
+                  onChange={(e) => setQrFilter(e.target.value as QrFilter)}
+                >
+                  <option value="any">Any</option>
+                  <option value="sent">Sent</option>
+                  <option value="unsent">Not sent</option>
+                </select>
+              </div>
+              {eventFields.map((f) => (
+                <div className="field" key={f.key}>
+                  <label htmlFor={`cert-field-${f.key}`}>{f.label}</label>
+                  <input
+                    id={`cert-field-${f.key}`}
+                    className="input"
+                    type="text"
+                    placeholder={`Any ${f.label.toLowerCase()}`}
+                    value={fieldFilters[f.key] ?? ""}
+                    onChange={(e) => setFieldFilters((s) => ({ ...s, [f.key]: e.target.value }))}
+                  />
+                </div>
+              ))}
               <div className="field cert-bulk__page-size">
                 <label htmlFor="cert-page-size">Rows per page</label>
                 <input
@@ -880,13 +1006,20 @@ export default function CertificatesPage() {
                   onChange={(e) => setPageSize(Math.max(5, Number(e.target.value) || 50))}
                 />
               </div>
-              <button
-                className="btn btn--ghost"
-                onClick={loadEvents}
-                disabled={loadingParticipants}
-              >
-                {loadingParticipants ? <span className="spinner spinner--dark" /> : "Refresh"}
-              </button>
+              <div className="cert-bulk__filter-actions">
+                {activeFilters > 0 && (
+                  <button className="btn btn--ghost btn--sm" onClick={resetFilters}>
+                    Reset filters ({activeFilters})
+                  </button>
+                )}
+                <button
+                  className="btn btn--ghost"
+                  onClick={loadEvents}
+                  disabled={loadingParticipants}
+                >
+                  {loadingParticipants ? <span className="spinner spinner--dark" /> : "Refresh"}
+                </button>
+              </div>
             </div>
 
             {participants && (
@@ -925,6 +1058,13 @@ export default function CertificatesPage() {
                       />
                       <span className="cert-bulk__name">{p.name}</span>
                       <span className="cert-bulk__email">{p.email}</span>
+                      <span className="cert-bulk__status">
+                        <span className={`badge ${p.registered ? "badge--ok" : "badge--pending"}`}>
+                          {p.registered ? "Checked" : "Pending"}
+                        </span>
+                        <span className="badge badge--info">{p.source || "—"}</span>
+                        {p.qrSentAt && <span className="badge badge--ok">QR sent</span>}
+                      </span>
                     </label>
                   ))}
                   {pageRows.length === 0 && (
