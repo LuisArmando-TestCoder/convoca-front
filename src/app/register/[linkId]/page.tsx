@@ -7,6 +7,7 @@ import { MODE_LABELS, type EventField, type EventMode } from "@/lib/types";
 
 interface LinkInfo {
   orgName: string;
+  linkName: string;
   event: {
     name: string;
     description: string;
@@ -140,7 +141,7 @@ export default function SelfRegisterPage() {
         ) : (
           <div className="card card--pad-lg">
             <span className="badge badge--info">{info.orgName}</span>
-            <h1 className="mt-8">{info.event.name}</h1>
+            <h1 className="mt-8">{info.linkName || info.event.name}</h1>
             <div className="row gap-8 wrap mt-8" style={{ marginBottom: 8 }}>
               <span className="badge badge--pending">{MODE_LABELS[info.event.mode]}</span>
               {info.event.date && <span className="muted small">📅 {new Date(info.event.date).toLocaleString()}</span>}

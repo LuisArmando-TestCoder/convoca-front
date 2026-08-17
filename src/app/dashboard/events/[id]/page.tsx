@@ -142,7 +142,7 @@ export default function EventDetailPage() {
           onChange={loadParticipants}
         />
       )}
-      {tab === "registration" && <LinksPanel eventId={id} />}
+      {tab === "registration" && <LinksPanel eventId={id} fields={event.fields ?? []} />}
       {tab === "settings" && settings && (
         <div className="stack gap-16" style={{ maxWidth: 560 }}>
           <form className="card" onSubmit={saveSettings}>

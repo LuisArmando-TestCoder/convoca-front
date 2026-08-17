@@ -16,6 +16,8 @@ export interface EventField {
 export interface Me {
   role: Role;
   email: string;
+  /** Event scope for collaborators (undefined = full org access). */
+  eventIds?: string[];
   org: {
     id: string;
     name: string;
@@ -62,12 +64,18 @@ export interface Participant {
 export interface Collaborator {
   email: string;
   name: string;
+  /** Events this collaborator can access (undefined = all events). */
+  eventIds?: string[];
   addedAt: string;
 }
 
 export interface SelfRegLink {
   id: string;
   active: boolean;
+  /** Display name shown on the registration page (WYSIWYG). */
+  name: string;
+  /** This link's own field schema (defaults to the event's fields). */
+  fields?: EventField[];
   createdAt: string;
   url: string;
 }
