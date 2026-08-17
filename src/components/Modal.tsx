@@ -19,7 +19,7 @@ export default function Modal({ title, onClose, children, footer }: Props) {
 
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(e) => e.stopPropagation()} style={{ maxHeight: "90vh", overflowY: "auto" }}>
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 16 }}>
           <h2>{title}</h2>
           <button className="btn btn--ghost btn--sm" onClick={onClose} aria-label="Close">✕</button>
