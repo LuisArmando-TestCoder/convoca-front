@@ -33,18 +33,24 @@ export default function LinksPanel({ eventId, fields }: { eventId: string; field
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [eventId]);
 
-  async function save(link: SelfRegLink | null, name: string, linkFields: EventField[], active: boolean) {
+  async function save(
+    link: SelfRegLink | null,
+    name: string,
+    linkFields: EventField[],
+    active: boolean,
+    application: boolean,
+  ) {
     try {
       if (link) {
         await api(`/api/events/${eventId}/links/${link.id}`, {
           method: "PATCH",
-          body: { name, fields: linkFields, active },
+          body: { name, fields: linkFields, active, application },
         });
         toast.push("Link updated.", "ok");
       } else {
         await api(`/api/events/${eventId}/links`, {
           method: "POST",
-          body: { name, fields: linkFields },
+          body: { name, fields: linkFields, application },
         });
         toast.push("Registration link created.", "ok");
       }
@@ -106,6 +112,7 @@ export default function LinksPanel({ eventId, fields }: { eventId: string; field
                 </div>
                 <div className="mt-8">
                   {l.active ? <span className="badge badge--ok">Active</span> : <span className="badge badge--pending">Disabled</span>}
+                  {l.application && <span className="badge badge--warn" style={{ marginLeft: 8 }}>Application</span>}
                   <span className="muted small" style={{ marginLeft: 8 }}>{l.fields?.length ?? 0} field{(l.fields?.length ?? 0) === 1 ? "" : "s"}</span>
                 </div>
               </div>
@@ -143,10 +150,11 @@ function LinkEditorModal({
   link: SelfRegLink | null;
   defaultFields: EventField[];
   onClose: () => void;
-  onSave: (link: SelfRegLink | null, name: string, fields: EventField[], active: boolean) => void;
+  onSave: (link: SelfRegLink | null, name: string, fields: EventField[], active: boolean, application: boolean) => void;
 }) {
   const [name, setName] = useState(link?.name ?? "");
   const [active, setActive] = useState(link?.active ?? true);
+  const [application, setApplication] = useState(link?.application ?? false);
   const [fields, setFields] = useState<EventField[]>(link?.fields?.length ? link.fields : defaultFields);
   const [busy, setBusy] = useState(false);
 
@@ -163,7 +171,7 @@ function LinkEditorModal({
     e.preventDefault();
     setBusy(true);
     try {
-      await onSave(link, name.trim(), fields, active);
+      await onSave(link, name.trim(), fields, active, application);
     } finally {
       setBusy(false);
     }
@@ -183,7 +191,7 @@ function LinkEditorModal({
       }
     >
       <form id="link-form" onSubmit={submit}>
-        <div className="field">
+        <div className="field" style={{ marginBottom: 20 }}>
           <label htmlFor="link-name">Link name</label>
           <input
             id="link-name"
@@ -196,13 +204,23 @@ function LinkEditorModal({
           <p className="hint" style={{ margin: "4px 0 0" }}>Shown as the title on the registration page.</p>
         </div>
 
-        <label className="row gap-8" style={{ margin: "12px 0 0", alignItems: "center" }}>
-          <input type="checkbox" className="check" checked={active} onChange={(e) => setActive(e.target.checked)} />
-          <span className="small">Link is active</span>
-        </label>
+        <div className="stack gap-10" style={{ marginBottom: 20 }}>
+          <label className="row gap-8" style={{ alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" className="check" checked={active} onChange={(e) => setActive(e.target.checked)} />
+            <span className="small">Link is active</span>
+          </label>
+
+          <label className="row gap-8" style={{ alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" className="check" checked={application} onChange={(e) => setApplication(e.target.checked)} />
+            <span className="small">Application link</span>
+          </label>
+          <p className="hint" style={{ margin: "0 0 0 25px" }}>
+            Registrants are held for review — no QR is emailed until you accept them from the participants list.
+          </p>
+        </div>
 
         {/* ── Field builder ─────────────────────────────────────────────── */}
-        <div className="fieldset mt-16">
+        <div className="fieldset" style={{ marginTop: 0 }}>
           <div className="fieldset__head">
             <div>
               <strong className="small">Registration form</strong>
@@ -214,7 +232,7 @@ function LinkEditorModal({
           </div>
 
           {fields.length > 0 && (
-            <div className="stack gap-8 mt-12">
+            <div className="stack gap-8" style={{ marginTop: 14 }}>
               {fields.map((f, i) => (
                 <div className="fieldrow" key={f.key}>
                   <input
@@ -238,7 +256,7 @@ function LinkEditorModal({
             </div>
           )}
 
-          <div className="row gap-8 wrap mt-12">
+          <div className="row gap-8 wrap" style={{ marginTop: 14 }}>
             <span className="hint">Examples:</span>
             {EXAMPLES.filter((ex) => !usedLabels.has(ex.toLowerCase())).map((ex) => (
               <button type="button" key={ex} className="chip" onClick={() => addField(ex)}>+ {ex}</button>
@@ -247,18 +265,18 @@ function LinkEditorModal({
         </div>
 
         {/* ── WYSIWYG preview ───────────────────────────────────────────── */}
-        <div className="fieldset mt-16">
+        <div className="fieldset" style={{ marginTop: 16 }}>
           <div className="fieldset__head">
             <div>
               <strong className="small">Preview</strong>
               <p className="hint" style={{ margin: "2px 0 0" }}>How the registration page will look.</p>
             </div>
           </div>
-          <div className="card mt-12" style={{ padding: 20, background: "var(--surface)" }}>
+          <div className="card" style={{ marginTop: 14, padding: 20, background: "var(--surface)" }}>
             <span className="badge badge--info">Your organization</span>
             <h3 className="mt-8" style={{ marginBottom: 4 }}>{name.trim() || "Untitled link"}</h3>
             <p className="muted small">Step 1 of {fields.length + 2}</p>
-            <div className="field mt-12">
+            <div className="field mt-8">
               <label className="small">What's your full name?</label>
               <input className="input" placeholder="As you'd like it on your ticket." disabled />
             </div>

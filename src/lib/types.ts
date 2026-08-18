@@ -43,6 +43,8 @@ export interface EventDoc {
   createdAt: string;
 }
 
+export type ApplicationStatus = "pending" | "accepted" | "rejected";
+
 export interface Participant {
   hash: string;
   name: string;
@@ -58,6 +60,12 @@ export interface Participant {
   registeredAt: string | null;
   source: ParticipantSource;
   createdAt: string;
+  /** True when this participant came in via an application-type link (awaiting review). */
+  application?: boolean;
+  /** Review state for application-origin participants. */
+  applicationStatus?: ApplicationStatus;
+  /** When true, the participant is moved to the hidden tab (declutters the list). */
+  hidden?: boolean;
 }
 
 
@@ -76,6 +84,8 @@ export interface SelfRegLink {
   name: string;
   /** This link's own field schema (defaults to the event's fields). */
   fields?: EventField[];
+  /** When true, this link is an application source: registrants are held for review. */
+  application?: boolean;
   createdAt: string;
   url: string;
 }

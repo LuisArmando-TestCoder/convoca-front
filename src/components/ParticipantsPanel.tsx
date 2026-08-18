@@ -35,6 +35,7 @@ const blankForm = (): PForm => ({ name: "", email: "", fields: {} });
 type QrFilter = "any" | "sent" | "unsent";
 type CheckFilter = "any" | "in" | "pending";
 type SourceFilter = "any" | "manual" | "csv" | "self";
+type View = "active" | "hidden";
 
 /** Reads a participant's value for a field key (custom map, or legacy column). */
 function pv(p: Participant, key: string): string {
@@ -69,6 +70,9 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
   const [starting, setStarting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // ── View (active vs hidden) ───────────────────────────────────────────────
+  const [view, setView] = useState<View>("active");
+
   // ── Filters ───────────────────────────────────────────────────────────────
   const [showFilters, setShowFilters] = useState(false);
   const [qrFilter, setQrFilter] = useState<QrFilter>("any");
@@ -89,9 +93,15 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
     setFieldFilters({});
   }
 
+  const hiddenCount = useMemo(() => participants.filter((p) => p.hidden).length, [participants]);
+  const activeCount = participants.length - hiddenCount;
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return participants.filter((p) => {
+      // View scoping: active view hides hidden participants; hidden view shows only them.
+      if (view === "active" && p.hidden) return false;
+      if (view === "hidden" && !p.hidden) return false;
       if (
         q &&
         ![p.name, p.email, ...fields.map((f) => pv(p, f.key))].some((v) => v.toLowerCase().includes(q))
@@ -107,7 +117,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
       }
       return true;
     });
-  }, [participants, query, fields, qrFilter, checkFilter, sourceFilter, fieldFilters]);
+  }, [participants, query, fields, qrFilter, checkFilter, sourceFilter, fieldFilters, view]);
 
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.hash));
   const selectedList = useMemo(() => participants.filter((p) => selected.has(p.hash)), [participants, selected]);
@@ -287,6 +297,48 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
     }
   }
 
+  // ── Application review actions ─────────────────────────────────────────────
+  async function accept(p: Participant) {
+    try {
+      await api(`/api/events/${eventId}/participants/${p.hash}/accept`, { method: "POST", body: {} });
+      toast.push(`${p.name} accepted — QR emailed.`, "ok");
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Accept failed.", "err");
+    }
+  }
+
+  async function reject(p: Participant) {
+    if (!confirm(`Reject ${p.name}'s application?`)) return;
+    try {
+      await api(`/api/events/${eventId}/participants/${p.hash}/reject`, { method: "POST", body: {} });
+      toast.push(`${p.name} rejected.`, "info");
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Reject failed.", "err");
+    }
+  }
+
+  async function hide(p: Participant) {
+    try {
+      await api(`/api/events/${eventId}/participants/${p.hash}/hide`, { method: "POST", body: {} });
+      toast.push(`${p.name} moved to hidden.`, "info");
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Hide failed.", "err");
+    }
+  }
+
+  async function unhide(p: Participant) {
+    try {
+      await api(`/api/events/${eventId}/participants/${p.hash}/unhide`, { method: "POST", body: {} });
+      toast.push(`${p.name} restored to the list.`, "ok");
+      onChange();
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : "Restore failed.", "err");
+    }
+  }
+
   // Live, sequential send to every selected participant. Progress streams in via
   // the WebSocket (see SendProgress); this just kicks it off.
   async function sendSelected() {
@@ -373,6 +425,16 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
         </div>
       </div>
 
+      {/* View toggle: active list vs hidden (decluttered) tab */}
+      <div className="tabs" style={{ marginBottom: 12 }}>
+        <button className={`tab ${view === "active" ? "tab--active" : ""}`} onClick={() => setView("active")}>
+          Participants{activeCount ? ` (${activeCount})` : ""}
+        </button>
+        <button className={`tab ${view === "hidden" ? "tab--active" : ""}`} onClick={() => setView("hidden")}>
+          Hidden{hiddenCount ? ` (${hiddenCount})` : ""}
+        </button>
+      </div>
+
       {showFilters && (
         <div className="filterbar">
           <div className="filterbar__group">
@@ -448,7 +510,11 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
 
       {filtered.length === 0 ? (
         <div className="card center" style={{ padding: 40 }}>
-          <p className="muted">{participants.length === 0 ? "No participants yet. Add one or import a file." : "No matches."}</p>
+          <p className="muted">
+            {view === "hidden"
+              ? (hiddenCount === 0 ? "No hidden participants. Use the eye icon on a row to move it here." : "No matches.")
+              : (participants.length === 0 ? "No participants yet. Add one or import a file." : "No matches.")}
+          </p>
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflowX: "auto" }}>
@@ -491,6 +557,8 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
                   <td>
                     {p.registered
                       ? <span className="badge badge--ok">Checked</span>
+                      : p.application
+                      ? <span className="badge badge--warn">{p.applicationStatus === "rejected" ? "Rejected" : "Application"}</span>
                       : <span className="badge badge--pending">Pending</span>}
                   </td>
                   <td>
@@ -510,6 +578,72 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Application action strip (below the table) ───────────────────────
+          Keeps the row itself uncluttered: only application-origin participants
+          get these extra controls, rendered as a compact icon strip with tooltips. */}
+      {view === "active" && filtered.some((p) => p.application) && (
+        <div className="appstrip">
+          <span className="appstrip__label">Applications</span>
+          {filtered.filter((p) => p.application).map((p) => (
+            <div className="appstrip__row" key={p.hash}>
+              <div className="appstrip__who">
+                <strong>{p.name}</strong>
+                <span className="muted small">{p.email}</span>
+              </div>
+              <div className="appstrip__status">
+                {p.applicationStatus === "accepted"
+                  ? <span className="badge badge--ok">Accepted</span>
+                  : p.applicationStatus === "rejected"
+                  ? <span className="badge badge--pending">Rejected</span>
+                  : <span className="badge badge--warn">Pending review</span>}
+              </div>
+              <div className="appstrip__actions">
+                {p.applicationStatus !== "accepted" && (
+                  <button className="icon-btn icon-btn--ok" title="Accept & email QR" onClick={() => accept(p)} aria-label="Accept application">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                  </button>
+                )}
+                {p.applicationStatus !== "rejected" && (
+                  <button className="icon-btn icon-btn--danger" title="Reject application" onClick={() => reject(p)} aria-label="Reject application">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                  </button>
+                )}
+                <button className="icon-btn" title="Hide from list" onClick={() => hide(p)} aria-label="Hide participant">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Hidden view: restore action ────────────────────────────────────── */}
+      {view === "hidden" && filtered.some((p) => p.hidden) && (
+        <div className="appstrip">
+          <span className="appstrip__label">Hidden participants</span>
+          {filtered.filter((p) => p.hidden).map((p) => (
+            <div className="appstrip__row" key={p.hash}>
+              <div className="appstrip__who">
+                <strong>{p.name}</strong>
+                <span className="muted small">{p.email}</span>
+              </div>
+              <div className="appstrip__status">
+                {p.applicationStatus === "accepted"
+                  ? <span className="badge badge--ok">Accepted</span>
+                  : p.applicationStatus === "rejected"
+                  ? <span className="badge badge--pending">Rejected</span>
+                  : <span className="badge badge--warn">Application</span>}
+              </div>
+              <div className="appstrip__actions">
+                <button className="icon-btn" title="Restore to list" onClick={() => unhide(p)} aria-label="Restore participant">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -562,14 +696,14 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
               <div className="spec">
                 <strong className="small">Your CSV or Excel (.xlsx) file needs a header row with these columns:</strong>
                 <ul className="spec-list">
-                  <li><code>name</code> — the participant&apos;s full name</li>
+                  <li><code>name</code> — the participant's full name</li>
                   <li><code>email</code> — where their QR ticket is sent</li>
                   {fields.map((f) => (
                     <li key={f.key}><code>{f.label}</code>{f.required ? " (required)" : ""}</li>
                   ))}
                 </ul>
                 <p className="hint" style={{ marginTop: 10 }}>
-                  Column order doesn&apos;t matter and common aliases work. Duplicates are skipped.
+                  Column order doesn't matter and common aliases work. Duplicates are skipped.
                   Imported people are added <strong>pending</strong> — no email is sent until you send it.
                 </p>
                 <button className="btn btn--ghost btn--sm mt-8" onClick={() => downloadCsv("participants-template.csv", templateCsv(fields))}>
@@ -588,7 +722,7 @@ export default function ParticipantsPanel({ eventId, fields, participants, onCha
                 onDrop={onDrop}
               >
                 <div className="dropzone__icon">📄</div>
-                <strong>Drag &amp; drop your CSV or Excel file</strong>
+                <strong>Drag & drop your CSV or Excel file</strong>
                 <span className="dropzone__hint">or click to browse — .csv or .xlsx</span>
               </div>
               <input

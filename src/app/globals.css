@@ -536,6 +536,46 @@ html.lenis, html.lenis body { height: auto; }
 .filterbar .select { min-width: 130px; }
 .selecthint { margin-bottom: 12px; align-items: center; }
 
+/* ── Application action strip (below the participants table) ─────────────────── */
+.appstrip {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--slate-050) 60%, transparent);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.appstrip__label {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--slate-500);
+}
+.appstrip__row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--white); border: 1px solid var(--border);
+}
+.appstrip__who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.appstrip__who strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appstrip__status { flex-shrink: 0; }
+.appstrip__actions { display: flex; gap: 6px; margin-left: auto; }
+
+/* Compact icon-only action buttons with tooltips */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--white) 70%, transparent);
+  color: var(--slate-700); transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.08s ease;
+}
+.icon-btn:hover { background: var(--slate-050); border-color: var(--slate-400); }
+.icon-btn:active { transform: translateY(1px) scale(0.98); }
+.icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--ring); }
+.icon-btn--ok { color: var(--success); }
+.icon-btn--ok:hover { background: var(--success-bg); border-color: color-mix(in srgb, var(--success) 50%, transparent); }
+.icon-btn--danger { color: var(--danger); }
+.icon-btn--danger:hover { background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+
 /* ── Live send progress ───────────────────────────────────────────────────────── */
 .sendbox { max-width: 560px; }
 .sendbar__track { height: 10px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--slate-300) 45%, transparent); }

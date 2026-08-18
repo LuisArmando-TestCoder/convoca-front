@@ -8,6 +8,7 @@ import { MODE_LABELS, type EventField, type EventMode } from "@/lib/types";
 interface LinkInfo {
   orgName: string;
   linkName: string;
+  application: boolean;
   event: {
     name: string;
     description: string;
@@ -39,7 +40,7 @@ export default function SelfRegisterPage() {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState<"fwd" | "back">("fwd");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<null | { already: boolean }>(null);
+  const [done, setDone] = useState<null | { already: boolean; application: boolean }>(null);
 
   useEffect(() => {
     api<LinkInfo>(`/api/public/register/${linkId}`, { auth: false })
@@ -101,7 +102,7 @@ export default function SelfRegisterPage() {
         auth: false,
         body: { name, email, fields: fieldVals },
       });
-      setDone({ already: res.alreadyRegistered });
+      setDone({ already: res.alreadyRegistered, application: info?.application ?? false });
     } catch (err) {
       setLoadErr(err instanceof ApiError ? err.message : "Registration failed.");
     } finally {
@@ -131,10 +132,12 @@ export default function SelfRegisterPage() {
         ) : done ? (
           <div className="card card--pad-lg center">
             <div style={{ fontSize: "2.6rem" }}>🎟️</div>
-            <h1 className="mt-8">{done.already ? "Already registered" : "You're registered!"}</h1>
+            <h1 className="mt-8">{done.already ? "Already registered" : done.application ? "Application sent" : "You're registered!"}</h1>
             <p className="muted mt-8">
               {done.already
                 ? "This email was already registered for this event — check your inbox for the QR."
+                : done.application
+                ? `Your application for ${info.event.name} has been sent. We'll review it and email you your check-in QR if you're accepted.`
                 : `We emailed your check-in QR to ${email}. Show it at the door.`}
             </p>
           </div>
@@ -180,7 +183,7 @@ export default function SelfRegisterPage() {
                 )}
                 <div className="grow" />
                 <button className="btn btn--primary" disabled={!valid || busy}>
-                  {busy ? <span className="spinner" /> : isLast ? "Register & email my QR" : "Continue"}
+                  {busy ? <span className="spinner" /> : isLast ? (info.application ? "Submit application" : "Register & email my QR") : "Continue"}
                 </button>
               </div>
             </form>
