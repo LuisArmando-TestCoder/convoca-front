@@ -12,6 +12,12 @@ export interface EventField {
   required: boolean;
 }
 
+/** A link shown on the QR email. `label` is optional; the URL is what renders. */
+export interface EventLink {
+  label: string;
+  url: string;
+}
+
 
 export interface Me {
   role: Role;
@@ -39,6 +45,10 @@ export interface EventDoc {
   quota: number | null;
   /** Team-defined participant fields (beyond name + email). */
   fields?: EventField[];
+  /** Links shown in the QR invite email (label optional). */
+  links?: EventLink[];
+  /** When false, the check-in email omits the QR image + attachment. */
+  showQr?: boolean;
   clonedFrom: string | null;
   createdAt: string;
 }

@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import Modal from "@/components/Modal";
 import EventFields, { BLANK_EVENT } from "@/components/EventFields";
-import { MODE_LABELS, type EventDoc, type EventField } from "@/lib/types";
+import { MODE_LABELS, type EventDoc, type EventField, type EventLink } from "@/lib/types";
 
 
 const BLANK = BLANK_EVENT;
@@ -35,6 +35,8 @@ export default function EventsPage() {
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
   const setFields = (fields: EventField[]) => setForm((f) => ({ ...f, fields }));
+  const setLinks = (links: EventLink[]) => setForm((f) => ({ ...f, links }));
+  const setShowQr = (show: boolean) => setForm((f) => ({ ...f, showQr: show }));
 
 
   async function create(e: React.FormEvent) {
@@ -109,7 +111,7 @@ export default function EventsPage() {
       {showCreate && (
         <Modal title="New event" onClose={() => setShowCreate(false)}>
           <form onSubmit={create}>
-            <EventFields form={form} set={set} setFields={setFields} />
+            <EventFields form={form} set={set} setFields={setFields} setLinks={setLinks} setShowQr={setShowQr} />
             <div className="row gap-8 mt-8" style={{ justifyContent: "flex-end" }}>
               <button type="button" className="btn btn--ghost" onClick={() => setShowCreate(false)}>Cancel</button>
 

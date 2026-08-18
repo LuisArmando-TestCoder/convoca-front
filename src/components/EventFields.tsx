@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
-import type { EventField, EventMode } from "@/lib/types";
+import type { EventField, EventLink, EventMode } from "@/lib/types";
 
 /** The controlled shape shared by the create modal and the settings editor. */
 export interface EventFormState {
@@ -13,6 +13,10 @@ export interface EventFormState {
   quota: string;
   /** Team-defined participant fields (beyond the built-in name + email). */
   fields: EventField[];
+  /** Links shown on the QR email (label optional). */
+  links: EventLink[];
+  /** When false, the check-in email omits the QR image + attachment. */
+  showQr: boolean;
 }
 
 export const BLANK_EVENT: EventFormState = {
@@ -23,6 +27,8 @@ export const BLANK_EVENT: EventFormState = {
   date: "",
   quota: "",
   fields: [],
+  links: [],
+  showQr: true,
 };
 
 /** Example fields the team can add with one click (not seeded by default). */
@@ -43,11 +49,16 @@ interface Props {
   form: EventFormState;
   set: (k: keyof EventFormState) => (e: ChangeEvent<FieldEl>) => void;
   setFields: (fields: EventField[]) => void;
+  setLinks: (links: EventLink[]) => void;
+  setShowQr: (show: boolean) => void;
 }
 
 /** Presentational event fields + a builder for team-defined participant fields. */
-export default function EventFields({ form, set, setFields }: Props) {
+export default function EventFields({ form, set, setFields, setLinks, setShowQr }: Props) {
+  const toggleShowQr = (e: ChangeEvent<HTMLInputElement>) =>
+    setShowQr(e.target.checked);
   const fields = form.fields ?? [];
+  const links = form.links ?? [];
   const takenKeys = () => new Set(fields.map((f) => f.key));
 
   const addField = (label: string) =>
@@ -138,6 +149,51 @@ export default function EventFields({ form, set, setFields }: Props) {
             <button type="button" key={ex} className="chip" onClick={() => addField(ex)}>+ {ex}</button>
           ))}
         </div>
+      </div>
+
+      {/* ── QR email links ─────────────────────────────────────────────────── */}
+      <div className="fieldset">
+        <div className="fieldset__head">
+          <div>
+            <strong className="small">QR email links</strong>
+            <p className="hint" style={{ margin: "2px 0 0" }}>
+              Optional links shown in the check-in email. Leave the URL empty to skip a row.
+            </p>
+          </div>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setLinks([...links, { label: "", url: "" }])}>+ Add link</button>
+        </div>
+
+        <label className="fieldrow__req small" style={{ marginTop: 10, display: "inline-flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            className="check"
+            checked={form.showQr}
+            onChange={toggleShowQr}
+          />
+          Include QR code in the check-in email
+        </label>
+
+        {links.length > 0 && (
+          <div className="stack gap-8 mt-12">
+            {links.map((l, i) => (
+              <div className="fieldrow" key={i}>
+                <input
+                  className="input"
+                  value={l.label}
+                  placeholder="Label (optional)"
+                  onChange={(e) => setLinks(links.map((x, idx) => (idx === i ? { ...x, label: e.target.value } : x)))}
+                />
+                <input
+                  className="input"
+                  value={l.url}
+                  placeholder="https://…"
+                  onChange={(e) => setLinks(links.map((x, idx) => (idx === i ? { ...x, url: e.target.value } : x)))}
+                />
+                <button type="button" className="btn btn--danger btn--sm" onClick={() => setLinks(links.filter((_, idx) => idx !== i))} aria-label="Remove link">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
