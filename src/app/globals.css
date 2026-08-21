@@ -1,53 +1,53 @@
 /* ── Convoca design system ────────────────────────────────────────────────────
    One source of truth for tokens + primitives. Every component composes these
-   classes so the whole app stays visually cohesive. Hyper-modern: gradient
-   brand, glassmorphism, layered soft shadows, gradient numerals, animated auth
-   mesh, custom scrollbars, and an automatic dark theme. Class names are stable
+   classes so the whole app stays visually cohesive. Minimal utilitario premium:
+   warm analog neutrals, one desaturated forest green accent, flat surfaces,
+   generous whitespace, and a calm success interaction. Class names are stable
    so all components keep working. */
 
 :root {
   color-scheme: light;
 
-  /* Brand — teal → emerald, with an indigo accent for depth */
-  --brand: #0d9488;
-  --brand-600: #0f766e;
-  --brand-700: #115e59;
-  --brand-050: #f0fdfa;
-  --brand-100: #ccfbf1;
-  --accent: #6366f1;
-  --brand-grad: linear-gradient(135deg, #14b8a6 0%, #0d9488 45%, #0f766e 100%);
+  /* Brand — a single desaturated forest green (Linear / Apple Wallet calm) */
+  --brand: #2c5f4a;
+  --brand-600: #274f3e;
+  --brand-700: #204335;
+  --brand-050: #f0f5f2;
+  --brand-100: #e2ece6;
+  --accent: #648a7a;
+  --brand-grad: linear-gradient(135deg, #2c5f4a 0%, #274f3e 100%);
 
-  /* Neutrals (a light-mode ramp; dark mode inverts the ramp below) */
-  --ink: #0b1220;              /* primary text / on-dark surfaces */
-  --slate-700: #334155;
-  --slate-500: #64748b;
-  --slate-400: #94a3b8;
-  --slate-300: #cbd5e1;
-  --slate-200: #e6ebf2;
-  --slate-100: #eef2f7;
-  --slate-050: #f7f9fc;
+  /* Neutrals — warm analog ramps (light-mode; dark mode inverts below) */
+  --ink: #1c1b18;              /* primary text */
+  --slate-700: #46443e;
+  --slate-500: #6e6a62;
+  --slate-400: #9c978c;
+  --slate-300: #d9d5cb;
+  --slate-200: #eae7de;
+  --slate-100: #f3f1ea;        /* app background */
+  --slate-050: #f8f7f3;
   --white: #ffffff;            /* elevated surface */
   --surface-2: #ffffff;
 
-  --success: #16a34a;
-  --success-bg: #dcfce7;
-  --danger: #dc2626;
-  --danger-bg: #fee2e2;
-  --warn: #d97706;
-  --warn-bg: #fef3c7;
+  --success: #2e7d5b;
+  --success-bg: #dfeee6;
+  --danger: #b0442f;
+  --danger-bg: #f6e2dc;
+  --warn: #9a6b1f;
+  --warn-bg: #f3e8d0;
 
   --border: color-mix(in srgb, var(--slate-300) 60%, transparent);
   --ring: color-mix(in srgb, var(--brand) 28%, transparent);
 
-  --radius: 16px;
-  --radius-sm: 11px;
-  --radius-lg: 22px;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
 
-  /* Soft, slightly brand-tinted elevation */
-  --shadow-sm: 0 1px 2px rgba(11, 18, 32, 0.06), 0 1px 3px rgba(11, 18, 32, 0.04);
-  --shadow: 0 10px 30px -12px rgba(13, 148, 136, 0.18), 0 6px 18px -10px rgba(11, 18, 32, 0.14);
-  --shadow-lg: 0 30px 70px -25px rgba(11, 18, 32, 0.35);
-  --glow: 0 0 0 1px color-mix(in srgb, var(--brand) 22%, transparent), 0 14px 40px -14px color-mix(in srgb, var(--brand) 45%, transparent);
+  /* Warm, barely-there elevation — no colored glows */
+  --shadow-sm: 0 1px 2px rgba(28, 27, 24, 0.05), 0 1px 3px rgba(28, 27, 24, 0.04);
+  --shadow: 0 10px 30px -14px rgba(28, 27, 24, 0.18);
+  --shadow-lg: 0 30px 70px -28px rgba(28, 27, 24, 0.32);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--brand) 20%, transparent), 0 12px 30px -14px color-mix(in srgb, var(--brand) 35%, transparent);
 
   --font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --maxw: 1120px;
@@ -57,31 +57,31 @@
   :root {
     color-scheme: dark;
 
-    --brand: #2dd4bf;
-    --brand-600: #14b8a6;
-    --brand-700: #5eead4;
-    --brand-050: #0b2b28;
-    --brand-100: #123f3a;
-    --brand-grad: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 50%, #0d9488 100%);
+    --brand: #4c8a6b;
+    --brand-600: #568f73;
+    --brand-700: #69a886;
+    --brand-050: #152019;
+    --brand-100: #1e2d24;
+    --brand-grad: linear-gradient(135deg, #4c8a6b 0%, #3d7a5c 100%);
 
-    --ink: #e8eef6;
-    --slate-700: #cbd5e1;   /* inverted ramp: 700 = lightest text */
-    --slate-500: #94a3b8;
-    --slate-400: #6b7a90;
-    --slate-300: #3a4658;
-    --slate-200: #263143;   /* borders */
-    --slate-100: #0c111b;   /* app background */
-    --slate-050: #141b28;   /* subtle hover fills */
-    --white: #161d2b;       /* elevated surface */
-    --surface-2: #1c2536;
+    --ink: #edebe4;
+    --slate-700: #d7d3c8;   /* inverted ramp: 700 = lightest text */
+    --slate-500: #a6a196;
+    --slate-400: #7d786e;
+    --slate-300: #4a453c;
+    --slate-200: #312d26;   /* borders */
+    --slate-100: #17150f;   /* app background */
+    --slate-050: #201d16;   /* subtle hover fills */
+    --white: #1e1b15;       /* elevated surface */
+    --surface-2: #262219;
 
-    --success-bg: color-mix(in srgb, #16a34a 22%, transparent);
-    --danger-bg: color-mix(in srgb, #dc2626 22%, transparent);
-    --warn-bg: color-mix(in srgb, #d97706 22%, transparent);
+    --success-bg: color-mix(in srgb, #2e7d5b 24%, transparent);
+    --danger-bg: color-mix(in srgb, #b0442f 24%, transparent);
+    --warn-bg: color-mix(in srgb, #9a6b1f 24%, transparent);
 
-    --border: color-mix(in srgb, #ffffff 12%, transparent);
+    --border: color-mix(in srgb, #ffffff 11%, transparent);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-    --shadow: 0 12px 34px -14px rgba(0, 0, 0, 0.6);
+    --shadow: 0 12px 34px -16px rgba(0, 0, 0, 0.6);
     --shadow-lg: 0 34px 80px -24px rgba(0, 0, 0, 0.75);
   }
 }
@@ -97,11 +97,7 @@ html, body {
   text-rendering: optimizeLegibility;
   font-size: 15px;
   line-height: 1.55;
-  background:
-    radial-gradient(900px 480px at 100% -8%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 60%),
-    radial-gradient(760px 420px at 0% 4%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%),
-    var(--slate-100);
-  background-attachment: fixed;
+  background: var(--slate-100);
   min-height: 100vh;
 }
 
@@ -167,13 +163,10 @@ h3 { font-size: 1rem; font-weight: 700; }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 .btn--primary {
-  background: var(--brand-grad); color: #fff;
-  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--brand) 65%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  background: var(--brand); color: #fff;
+  box-shadow: 0 1px 2px rgba(28, 27, 24, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
-.btn--primary:hover { filter: brightness(1.06) saturate(1.05); transform: translateY(-1px);
-  box-shadow: 0 12px 28px -8px color-mix(in srgb, var(--brand) 70%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3); }
+.btn--primary:hover { background: var(--brand-600); transform: translateY(-1px); }
 
 .btn--ghost {
   background: color-mix(in srgb, var(--white) 70%, transparent);
@@ -233,17 +226,17 @@ h3 { font-size: 1rem; font-weight: 700; }
 
 /* ── App shell ──────────────────────────────────────────────────────────────── */
 .topbar {
-  background: color-mix(in srgb, var(--white) 72%, transparent);
-  backdrop-filter: saturate(1.4) blur(14px);
-  -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  background: color-mix(in srgb, var(--white) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 20;
 }
 .topbar__inner { display: flex; align-items: center; gap: 16px; height: 64px; }
 .brand-mark { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--ink); font-size: 1.12rem; letter-spacing: -0.02em; }
 .brand-dot {
-  width: 24px; height: 24px; border-radius: 8px; background: var(--brand-grad);
-  box-shadow: 0 4px 12px -3px color-mix(in srgb, var(--brand) 70%, transparent), inset 0 1px 0 rgba(255,255,255,0.4);
+  width: 24px; height: 24px; border-radius: 8px; background: var(--brand);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 /* ── Auth / public layouts ──────────────────────────────────────────────────── */
@@ -278,8 +271,8 @@ h3 { font-size: 1rem; font-weight: 700; }
   background: radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 70%); }
 .stat:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
 .stat__num {
-  font-size: 1.95rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1;
-  background: var(--brand-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-size: 1.95rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 .stat__label { font-size: 0.8rem; color: var(--slate-500); margin-top: 4px; }
 
@@ -351,13 +344,37 @@ h3 { font-size: 1rem; font-weight: 700; }
 .scan-modal--success { --sm-accent: var(--success); }
 .scan-modal--duplicate { --sm-accent: var(--warn); }
 .scan-modal--not_found, .scan-modal--wrong_event { --sm-accent: var(--danger); }
+.scan-modal--success .scan-modal__badge {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--success) 42%, transparent);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--success) 7%, transparent);
+}
+.scan-modal--duplicate .scan-modal__badge {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 42%, transparent);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--warn) 7%, transparent);
+}
+.scan-modal--not_found .scan-modal__badge,
+.scan-modal--wrong_event .scan-modal__badge {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--danger) 7%, transparent);
+}
 .scan-modal__badge {
   width: 84px; height: 84px; margin: 4px auto 14px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 2.6rem; line-height: 1;
+  display: grid; place-items: center; line-height: 1;
   background: color-mix(in srgb, var(--sm-accent) 15%, transparent);
   border: 2px solid color-mix(in srgb, var(--sm-accent) 45%, transparent);
   box-shadow: 0 0 0 8px color-mix(in srgb, var(--sm-accent) 8%, transparent);
-  animation: popIcon 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.scan-mark {
+  position: relative; display: grid; place-items: center; color: var(--sm-accent);
+}
+.scan-mark > svg { position: relative; z-index: 1; }
+.scan-mark__ripple {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 1.5px solid var(--sm-accent);
+  pointer-events: none;
 }
 .scan-modal__title { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; color: var(--sm-accent); }
 .scan-modal__name { font-size: 1.15rem; font-weight: 700; margin-top: 6px; }

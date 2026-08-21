@@ -3,16 +3,94 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { motion, useReducedMotion } from "framer-motion";
 import { api, ApiError } from "@/lib/api";
 import type { CheckinResult, EventDoc } from "@/lib/types";
 
 /** Per-outcome presentation for the confirm modal shown over the camera. */
-const OUTCOME: Record<CheckinResult["outcome"], { icon: string; title: string }> = {
-  success: { icon: "✅", title: "Checked in" },
-  duplicate: { icon: "⚠️", title: "Already registered" },
-  not_found: { icon: "🚫", title: "Not found" },
-  wrong_event: { icon: "🚫", title: "Wrong event" },
+const OUTCOME: Record<
+  CheckinResult["outcome"],
+  { kind: "success" | "duplicate" | "not_found" | "wrong_event"; title: string }
+> = {
+  success: { kind: "success", title: "Checked in" },
+  duplicate: { kind: "duplicate", title: "Already registered" },
+  not_found: { kind: "not_found", title: "Not found" },
+  wrong_event: { kind: "wrong_event", title: "Wrong event" },
 };
+
+const EASE = [0.22, 1, 0.36, 1] as const;
+
+/** Spring-drawn checkmark with a single expanding ripple. Success only. */
+function SuccessMark() {
+  const reduce = useReducedMotion();
+  if (reduce) {
+    return (
+      <div className="scan-mark">
+        <svg viewBox="0 0 52 52" width="42" height="42" fill="none" aria-hidden>
+          <circle cx="26" cy="26" r="23" stroke="currentColor" strokeWidth="2.5" />
+          <path
+            d="M16 27.2 L23 34 L37 19"
+            stroke="currentColor"
+            strokeWidth="3.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+    );
+  }
+  return (
+    <div className="scan-mark">
+      <svg viewBox="0 0 52 52" width="42" height="42" fill="none" aria-hidden>
+        <motion.circle
+          cx="26"
+          cy="26"
+          r="23"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.45, ease: EASE }}
+        />
+        <motion.path
+          d="M16 27.2 L23 34 L37 19"
+          stroke="currentColor"
+          strokeWidth="3.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{ duration: 0.5, ease: EASE, delay: 0.22 }}
+        />
+      </svg>
+      <motion.span
+        className="scan-mark__ripple"
+        aria-hidden
+        initial={{ opacity: 0.45, scale: 0.55 }}
+        animate={{ opacity: 0, scale: 1.55 }}
+        transition={{ duration: 0.9, ease: "easeOut", delay: 0.15 }}
+      />
+    </div>
+  );
+}
+
+/** Calm reference glyphs for non-success outcomes. No emoji, no celebration. */
+function StaticGlyph({ kind }: { kind: "duplicate" | "not_found" | "wrong_event" }) {
+  if (kind === "duplicate") {
+    return (
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden>
+        <path d="M12 3.5 L21 20 L3 20 Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <line x1="12" y1="9" x2="12" y2="13.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <circle cx="12" cy="16.8" r="1.1" fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden>
+      <path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export default function ScanPage() {
   const { id } = useParams<{ id: string }>();
@@ -116,13 +194,15 @@ export default function ScanPage() {
       </div>
 
       <p className="muted small center mt-16">
-        Point the camera at a participant&apos;s QR. Duplicate scans are flagged automatically.
+        Point the camera at a participant's QR. Duplicate scans are flagged automatically.
       </p>
 
       {result && view && (
         <div className="scan-modal-overlay" role="dialog" aria-modal="true" aria-label={view.title}>
           <div className={`scan-modal scan-modal--${result.outcome}`}>
-            <div className="scan-modal__badge">{view.icon}</div>
+            <div className="scan-modal__badge">
+              {view.kind === "success" ? <SuccessMark /> : <StaticGlyph kind={view.kind} />}
+            </div>
             <div className="scan-modal__title">{view.title}</div>
             {result.participant && <div className="scan-modal__name">{result.participant.name}</div>}
             <p className="scan-modal__meta">{result.message}</p>
@@ -133,7 +213,7 @@ export default function ScanPage() {
               <p className="scan-modal__meta">First checked in: {new Date(result.registeredAt).toLocaleString()}</p>
             )}
             <button className="scan-modal__confirm" onClick={confirmResult} autoFocus>
-              {result.outcome === "success" ? "Confirm & scan next" : "Got it — scan next"}
+              {result.outcome === "success" ? "Confirm & scan next" : "Got it, scan next"}
             </button>
           </div>
         </div>
